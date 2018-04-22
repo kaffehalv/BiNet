@@ -1,4 +1,4 @@
-from keras.layers import Conv2D
+from keras.layers import Conv2D, SeparableConv2D
 from keras.applications.mobilenet import DepthwiseConv2D
 from keras.layers import BatchNormalization
 from keras.layers import Activation, LeakyReLU, PReLU
@@ -7,6 +7,7 @@ from keras.layers import Dropout
 from keras.layers import MaxPooling2D, AveragePooling2D
 from keras.layers import GlobalAveragePooling2D
 from keras.layers import Softmax
+from keras import backend as K
 
 
 class SataNet():
@@ -17,148 +18,146 @@ class SataNet():
         self.input_shape = (height, width, depth)
         self.classes = classes
 
-        self.activation = "leaky"
-        self.dropout_rate = 0.5
-        self.dw_conv_size = 3
+        self.activation = "prelu"
+        self.weight_reg_factor = 0.
+        self.use_dropout = True
         self.pool_size = 3
         self.pool_stride = 2
 
-        self.first_filters = 32
-        self.first_kernel_size = 3
-        self.first_downsample = False
+        self.filters_0 = 24
+        self.kernel_size_0 = 5
+        self.downsample_0 = False
+        self.dropout_rate_0 = 1 / 1024
 
-        self.squeeze_1 = 16
-        self.expand_1 = 64
-        self.repeat_1 = 2
-        self.downsample_1 = True
-
-        self.squeeze_2 = 32
-        self.expand_2 = 128
-        self.repeat_2 = 2
-        self.downsample_2 = True
-
-        self.squeeze_3 = 64
-        self.expand_3 = 256
-        self.repeat_3 = 2
-        self.downsample_3 = True
-
-        self.module_number = 0
+        self.filters_1 = 24
+        self.kernel_size_0 = 5
+        self.downsample_0 = False
+        self.dropout_rate_0 = 1 / 1024
 
     def _activation(self, x, name):
-        activation_name = name + "_" + self.activation
+        activation_name = name + self.activation
         if (self.activation == "leaky"):
             x = LeakyReLU(name=activation_name)(x)
         elif (self.activation == "prelu"):
-            x = PReLU(v)(x)
+            x = PReLU(shared_axes=[1, 2], name=activation_name)(x)
         else:
             x = Activation(self.activation, name=activation_name)(x)
         return x
 
+    def _binary_reg(self, weight_matrix):
+        return self.weight_reg_factor * K.sum(
+            K.abs(K.abs(weight_matrix) - 1.0))
+
     def _batchNormAndActivation(self, x_input, name):
-        x = BatchNormalization(scale=self.scale, name=name + "_bn")(x_input)
+        x = BatchNormalization(scale=self.scale, name=name + "bn")(x_input)
         return self._activation(x, name=name)
 
-    def _pointwiseConv2D(self,
-                         x_input,
-                         filters,
-                         name,
-                         batch_norm=True,
-                         activation=True):
+    def _first_conv_block(self, x, filters, kernel_size, downsample,
+                          dropout_rate, name):
+        layer_name = name + "_" + str(kernel_size) + "x" + str(kernel_size)
+
         x = Conv2D(
-            filters, (1, 1),
+            filters,
+            kernel_size=kernel_size,
+            kernel_regularizer=self._binary_reg,
             use_bias=self.use_bias,
             padding=self.padding,
-            name=name + "_1x1")(x_input)
-        if batch_norm:
-            x = BatchNormalization(scale=self.scale, name=name + "_bn")(x)
-        if activation:
-            x = self._activation(x, name=name)
-        return x
-
-    def _depthwiseConv2D(self,
-                         x_input,
-                         kernel_size,
-                         name,
-                         batch_norm=True,
-                         activation=True):
-        x = DepthwiseConv2D(
-            (kernel_size, 1),
-            use_bias=self.use_bias,
-            padding=self.padding,
-            name=name + "_" + str(kernel_size) + "x1")(x_input)
-        x = DepthwiseConv2D(
-            (1, kernel_size),
-            use_bias=self.use_bias,
-            padding=self.padding,
-            name=name + "_1x" + str(kernel_size))(x)
-        if batch_norm:
-            x = BatchNormalization(scale=self.scale, name=name + "_bn")(x)
-        if activation:
-            x = self._activation(x, name=name)
-        return x
-
-    def _module(self, x_input, kernel_size, squeeze, expand, name):
-        x_left = self._pointwiseConv2D(x_input, expand, name=name + "_left_pw")
-
-        x_right = self._pointwiseConv2D(
-            x_input, squeeze, name=name + "_right_squeeze_pw")
-        x_right = self._depthwiseConv2D(
-            x_right, kernel_size, name=name + "_right_dw")
-        x_right = self._pointwiseConv2D(
-            x_right, expand, name=name + "_right_expand_pw")
-
-        x = Add(name=name + "_add")([x_left, x_right])
-        return self._batchNormAndActivation(x, name=name)
-
-    def _module_repeat(self, x_input, kernel_size, squeeze, expand, repeat):
-        for _ in range(repeat):
-            self.module_number += 1
-            name = "m" + str(self.module_number)
-            x = self._module(x_input, kernel_size, squeeze, expand, name)
-        return x
-
-    def build(self, x_input):
-        x = Conv2D(
-            self.first_filters,
-            self.first_kernel_size,
             input_shape=self.input_shape,
-            use_bias=self.use_bias,
-            padding=self.padding,
-            name="first_" + str(self.first_kernel_size) + "x" +
-            str(self.first_kernel_size))(x_input)
-        x = self._batchNormAndActivation(x, name="first")
-        if self.first_downsample:
+            name=layer_name + "conv")(x)
+        x = self._batchNormAndActivation(x, name=name)
+        if downsample:
             x = MaxPooling2D(
                 pool_size=self.pool_size,
                 strides=self.pool_stride,
-                padding=self.padding)(x)
+                padding=self.padding,
+                name=name + "maxpool")(x)
+        if self.use_dropout:
+            x = Dropout(rate=dropout_rate, name=name + "dropout")(x)
+        return x
 
-        x = self._module_repeat(x, self.dw_conv_size, self.squeeze_1,
-                                self.expand_1, self.repeat_1)
-        if self.downsample_1:
+    def _conv_block(self,
+                    x_input,
+                    filters,
+                    kernel_size,
+                    name,
+                    dilation_rate=1,
+                    batch_norm=False,
+                    activation=False):
+        layer_name = name + "_" + str(kernel_size) + "x" + str(kernel_size)
+        if kernel_size == 1:
+            x = Conv2D(
+                filters,
+                kernel_size=kernel_size,
+                kernel_regularizer=self._binary_reg,
+                use_bias=self.use_bias,
+                padding=self.padding,
+                name=layer_name + "conv")(x_input)
+        else:
+            x = SeparableConv2D(
+                filters,
+                kernel_size=kernel_size,
+                depthwise_regularizer=self._binary_reg,
+                pointwise_regularizer=self._binary_reg,
+                dilation_rate=dilation_rate,
+                use_bias=self.use_bias,
+                padding=self.padding,
+                name=layer_name + "conv")(x_input)
+        if batch_norm:
+            x = BatchNormalization(scale=self.scale, name=layer_name + "bn")(x)
+        if activation:
+            x = self._activation(x, name=layer_name)
+        return x
+
+    def _module(self, x_input, filters, kernel_size, downsample, dropout_rate,
+                name):
+        num_branches = (kernel_size + 1) // 2
+        filters_per_branch = filters // num_branches
+
+        if num_branches == 1:
+            x = self._conv_block(
+                x_input,
+                filters=filters_per_branch,
+                kernel_size=kernel_size,
+                name=name + "d0")
+        else:
+            tensor_list = []
+            for n in range(num_branches):
+                x = self._conv_block(
+                    x_input,
+                    filters=filters_per_branch,
+                    kernel_size=kernel_size - 2 * n,
+                    name=name + "d" + str(n))
+                tensor_list.append(x)
+            x = Concatenate(name=name + "concat")(tensor_list)
+        x = self._batchNormAndActivation(x, name=name)
+
+        if downsample:
             x = MaxPooling2D(
                 pool_size=self.pool_size,
                 strides=self.pool_stride,
-                padding=self.padding)(x)
+                padding=self.padding,
+                name=name + "maxpool")(x)
+        if self.use_dropout:
+            x = Dropout(rate=dropout_rate, name=name + "dropout")(x)
+        return x
 
-        x = self._module_repeat(x, self.dw_conv_size, self.squeeze_2,
-                                self.expand_2, self.repeat_2)
-        if self.downsample_2:
-            x = MaxPooling2D(
-                pool_size=self.pool_size,
-                strides=self.pool_stride,
-                padding=self.padding)(x)
-
-        x = self._module_repeat(x, self.dw_conv_size, self.squeeze_3,
-                                self.expand_3, self.repeat_3)
-        if self.downsample_3:
-            x = MaxPooling2D(
-                pool_size=self.pool_size,
-                strides=self.pool_stride,
-                padding=self.padding)(x)
-
-        x = Dropout(rate=self.dropout_rate)(x)
-        x = self._pointwiseConv2D(x, self.classes, name="last")
+    def build(self, x):
+        x = self._first_conv_block(
+            x,
+            self.filters_0,
+            self.kernel_size_0,
+            self.downsample_0,
+            self.dropout_rate_0,
+            name="first")
+        for n in range(self.num_blocks):
+            module_name = "m" + str(n) + "_"
+            x = self._module(
+                x,
+                self.filters[n],
+                self.kernel_size[n],
+                self.downsample[n],
+                self.dropout_rate[n],
+                name=module_name)
         x = GlobalAveragePooling2D(name="global_avg_pool")(x)
         x = Softmax(name="softmax")(x)
         return x
