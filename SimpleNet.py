@@ -1,44 +1,54 @@
-from keras.layers import Conv2D, BatchNormalization, Activation, PReLU
-from keras.layers import Dropout, Add, DepthwiseConv2D
-from keras.layers import MaxPooling2D, Concatenate
+from keras.layers import Conv2D, BatchNormalization, Activation
+from keras.layers import Dropout
+from keras.layers import MaxPooling2D
 from keras.layers import GlobalAveragePooling2D
 from keras.layers import Dense
 from keras.layers import Softmax
 from keras import backend as K
+from binary_utils import BinaryConv2D, Binarization
 
 
 class SimpleNet():
     def __init__(self, height=32, width=32, depth=3, classes=10):
         self.use_bias = False
-        self.scale = False
+        self.scale = True
         self.input_shape = (height, width, depth)
         self.classes = classes
 
-        self.activation = "prelu"
-        self.use_dropout = True
-        self.pool_size = 3
+        self.pool_size = 2
         self.pool_stride = 2
         self.padding = "same"
+        self.conv_type = "binary"
+        self.activation = "binary"
 
-        self.filters_0 = 32
-        self.kernel_size_0 = 3
-        self.downsample_0 = True
+        self.activity_epsilon = 1e-3
+        self.kernel_epsilon = 1e-3
+        self.dropout_rate = 0.1
+        self.weight_reg_factor = 1e-5
 
-        self.filters_1 = 64
+        self.filters_1 = 32
         self.repeats_1 = 2
-        self.downsample_1 = True
 
-        self.filters_2 = 128
+        self.filters_2 = 64
         self.repeats_2 = 2
-        self.downsample_2 = False
 
-        self.dense_neurons = 64
+        self.filters_3 = 128
+        self.repeats_3 = 2
 
-        self.block_id = 0
+        self.module_id = 0
+
+    def _binary_reg(self, weight_matrix):
+        return self.weight_reg_factor * K.sum(
+            K.square(K.abs(weight_matrix) - 1.0))
 
     def _activation(self, x, name, is_dense=False):
         activation_name = name + "_" + self.activation
-        if (self.activation == "prelu"):
+        if (self.activation == "binary"):
+            x = Binarization(
+                epsilon=self.activity_epsilon,
+                activity_regularizer=self._binary_reg,
+                name=activation_name)(x)
+        elif (self.activation == "prelu"):
             if is_dense:
                 x = PReLU(name=activation_name)(x)
             else:
@@ -47,82 +57,67 @@ class SimpleNet():
             x = Activation(self.activation, name=activation_name)(x)
         return x
 
-    def _batchNormAndActivation(self, x_input, name, is_dense=False):
-        x = BatchNormalization(scale=self.scale, name=name + "_bn")(x_input)
-        return self._activation(x, name=name, is_dense=is_dense)
+    def _batch_norm(self, x_input, name):
+        return BatchNormalization(scale=self.scale, name=name + "_bn")(x_input)
 
-    def _conv_block(self, x, filters, kernel_size, name, strides=1):
-        if type(kernel_size) is tuple:
-            kh = kernel_size[0]
-            kw = kernel_size[1]
-        else:
-            kh = kernel_size
-            kw = kernel_size
-        layer_name = name + "_conv" + str(kh) + "x" + str(kw)
-        x = Conv2D(
-            filters,
-            kernel_size=kernel_size,
-            strides=strides,
-            use_bias=self.use_bias,
-            padding=self.padding,
-            name=layer_name)(x)
-        x = self._batchNormAndActivation(x, name=layer_name)
+    def _conv_block(self, x, filters,  pool, name):
+        layer_name = name + "_conv"
+        if self.conv_type == "full":
+            x = Conv2D(
+                filters,
+                kernel_size=3,
+                use_bias=self.use_bias,
+                padding=self.padding,
+                name=layer_name)(x)
+        elif self.conv_type == "binary":
+            x = BinaryConv2D(
+                filters,
+                kernel_size=3,
+                kernel_regularizer=self._binary_reg,
+                kernel_epsilon=self.kernel_epsilon,
+                use_bias=self.use_bias,
+                padding=self.padding,
+                name=layer_name)(x)
+        if pool:
+            x = MaxPooling2D(
+                pool_size=self.pool_size,
+                strides=self.pool_stride,
+                name=name + "_maxpool")(x)
+        x = self._batch_norm(x, name=name)
+        x = self._activation(x, name=name)
         return x
 
-    def _squeezenext_unit(self, x_in, filters, stride, name):
-        x = self._conv_block(
-            x_in, filters=filters // 2, kernel_size=1, name=name + "_squeeze1")
-        x = self._conv_block(
-            x, filters=filters // 4, kernel_size=1, name=name + "_squeeze2")
-        x = self._conv_block(
-            x, filters=filters // 2, kernel_size=(1, 3), strides=(1, stride), name=name)
-        x = self._conv_block(
-            x, filters=filters // 2, kernel_size=(3, 1), strides=(stride, 1), name=name)
-        x = self._conv_block(
-            x, filters=filters, kernel_size=1, name=name + "_expand")
-
-        if stride == 1:
-            merge_name = name + "_add"
-            x = Add(name=merge_name)([x_in, x])
-        else:
-            merge_name = name + "_concat"
-            x_pool = MaxPooling2D(name=name+"_pool")(x_in)
-            x = Concatenate(name=merge_name)([x_pool, x])
-        x = self._batchNormAndActivation(x, name=merge_name)
-        return x
-
-    def _squeezenext_block(self, x, filters, repeats):
-        self.block_id += 1
-        name = "b" + str(self.block_id)
+    def _module(self, x, filters, repeats):
+        self.module_id += 1
+        name = "m" + str(self.module_id)
         for n in range(repeats):
-            unit_name = name + "_u" + str(n)
-            if n == 0:
-                stride = 2
-                f = filters // 2
+            unit_name = name + "_b" + str(n)
+            if n == (repeats - 1):
+                x = self._conv_block(
+                    x,
+                    filters=filters,
+                    pool=True,
+                    name=unit_name)
             else:
-                stride = 1
-                f = filters
-            x = self._squeezenext_unit(x, filters=f, stride=stride, name=unit_name)
+                x = self._conv_block(
+                    x,
+                    filters=filters,
+                    pool=False,
+                    name=unit_name)
         return x
 
     def build(self, x):
-        x = self._conv_block(
-            x,
-            filters=self.filters_0,
-            kernel_size=self.kernel_size_0,
-            name="first")
+        x = self._module(x, filters=self.filters_1, repeats=self.repeats_1)
 
-        x = self._squeezenext_block(
-            x, filters=self.filters_1, repeats=self.repeats_1)
+        x = self._module(x, filters=self.filters_2, repeats=self.repeats_2)
 
-        x = self._squeezenext_block(
-            x, filters=self.filters_2, repeats=self.repeats_2)
+        x = self._module(x, filters=self.filters_3, repeats=self.repeats_3)
 
-        x = self._conv_block(
-            x, filters=self.dense_neurons, kernel_size=1, name="last")
+        x = GlobalAveragePooling2D(name="global_avg_pool")(x)
 
-        layer_name = "global_avg_pool"
-        x = GlobalAveragePooling2D(name=layer_name)(x)
-        x = Dense(self.classes)(x)
+        if self.dropout_rate > 0.0:
+            x = Dropout(rate=self.dropout_rate, name="dropout")(x)
+
+        x = Dense(self.classes, name="dense")(x)
         x = Softmax(name="softmax")(x)
         return x

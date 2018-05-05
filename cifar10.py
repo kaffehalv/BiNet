@@ -15,11 +15,11 @@ from math import cos, pi
 
 gpus = 1
 batch_size = max(128 * gpus, 32)
-epochs_half_period = 15
-epochs_end = max(epochs_half_period // 5, 2)
+epochs_half_period = 16
+epochs_end = max(epochs_half_period // 2, 2)
 epochs = 2 * epochs_half_period + epochs_end
 verbose = 2
-lr_max = 1.0
+lr_max = 1e-3
 lr_init = 1e-1 * lr_max
 lr_min = 1e-3 * lr_max
 momentum = 0.9
@@ -69,17 +69,17 @@ val_size = y_test.shape[0]
 num_classes = y_test.shape[1]
 validation_steps = val_size // batch_size
 
+
+def pre_process(x):
+    x /= 255.
+    return 2. * (x - 0.5)
+
+
 train_datagen = ImageDataGenerator(
-    samplewise_center=True,
-    samplewise_std_normalization=True,
-    rotation_range=15,
-    width_shift_range=0.01,
-    height_shift_range=0.01,
-    horizontal_flip=True)
+    preprocessing_function=pre_process, horizontal_flip=True)
 train_datagen.fit(x_train)
 
-val_datagen = ImageDataGenerator(
-    samplewise_center=True, samplewise_std_normalization=True)
+val_datagen = ImageDataGenerator(preprocessing_function=pre_process)
 val_datagen.fit(x_test)
 
 if gpus == 1:
@@ -141,4 +141,24 @@ model.load_weights(weights_path)
 scores = model.evaluate_generator(
     val_datagen.flow(x_test, y_test, batch_size=batch_size),
     steps=validation_steps)
-print("BEST WEIGHTS: loss = %f, acc = %f " % (scores[0], scores[1]))
+print("FLOAT WEIGHTS: loss = %f, acc = %f " % (scores[0], scores[1]))
+
+for l in model.layers:
+    if "conv" in l.name:
+        w = l.get_weights()[0]
+        mu = np.mean(w)
+        sigma = np.sqrt(np.mean((w - mu)**2))
+        minval = np.amin(w)
+        maxval = np.amax(w)
+        print("mu = %f, sigma = %f, min = %f, max = %f" % (mu, sigma, minval,
+                                                           maxval))
+for l in model.layers:
+    if "conv" in l.name:
+        w = l.get_weights()
+        l.set_weights(np.sign(w))
+
+scores_binary = model.evaluate_generator(
+    val_datagen.flow(x_test, y_test, batch_size=batch_size),
+    steps=validation_steps)
+print("BINARY WEIGHTS: loss = %f, acc = %f " % (scores_binary[0],
+                                                scores_binary[1]))
