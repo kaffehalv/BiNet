@@ -10,20 +10,35 @@ from keras.datasets import cifar10, cifar100
 from keras import optimizers
 from keras import callbacks
 from SataNet import SataNet
-from SimpleNet import SimpleNet
+from BiNet import BiNet
 from math import cos, pi
 
 gpus = 1
 batch_size = max(128 * gpus, 32)
-epochs_half_period = 16
+epochs_half_period = 100
 epochs_end = max(epochs_half_period // 2, 2)
 epochs = 2 * epochs_half_period + epochs_end
 verbose = 2
-lr_max = 1e-3
+
+conv_type = "binary"
+activation = "binary"
+test_hard = False
+kernel_epsilon = 1e-3
+kernel_noise_stddev = 1e-3
+activity_epsilon = 1e-1
+activity_noise_stddev = 0.0
+
+if conv_type == "full":
+    lr_max = 1e0
+elif conv_type == "binary":
+    lr_max = 1e-1
+if activation == "binary":
+    lr_max *= activity_epsilon
 lr_init = 1e-1 * lr_max
 lr_min = 1e-3 * lr_max
 momentum = 0.9
 weights_path = "C:/Users/niclas/ML-Projects/cifar/weights.hdf5"
+full_weights_path = "C:/Users/niclas/ML-Projects/cifar/full_weights.hdf5"
 
 
 def interpolate(val0, val1, t):
@@ -71,8 +86,7 @@ validation_steps = val_size // batch_size
 
 
 def pre_process(x):
-    x /= 255.
-    return 2. * (x - 0.5)
+    return 2. * (x / 255. - 0.5)
 
 
 train_datagen = ImageDataGenerator(
@@ -89,13 +103,23 @@ else:
 
 # build the model
 with tf.device(device):
-    model_input = Input(shape=(32, 32, 3))
-    #network = SataNet(32, 32, 3, num_classes)
-    network = SimpleNet(32, 32, 3, num_classes)
+    input_shape = (32, 32, 3)
+    model_input = Input(shape=input_shape)
+    network = BiNet(
+        conv_type=conv_type,
+        activation=activation,
+        kernel_epsilon=kernel_epsilon,
+        kernel_noise_stddev=kernel_noise_stddev,
+        activity_epsilon=activity_epsilon,
+        activity_noise_stddev=activity_noise_stddev,
+        test_hard=test_hard,
+        input_shape=input_shape,
+        classes=num_classes)
     model_output = network.build(model_input)
     model = Model(inputs=model_input, outputs=model_output)
     model.summary()
-    #model.load_weights(weights_path)
+    model.load_weights(weights_path)
+    #model.load_weights(full_weights_path)
 
 batches_per_epoch = len(x_train) // batch_size
 

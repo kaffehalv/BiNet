@@ -8,23 +8,36 @@ from keras import backend as K
 from binary_utils import BinaryConv2D, Binarization
 
 
-class SimpleNet():
-    def __init__(self, height=32, width=32, depth=3, classes=10):
+class BiNet():
+    def __init__(self,
+                 conv_type="binary",
+                 activation="binary",
+                 kernel_epsilon=1e-4,
+                 kernel_noise_stddev=1e-2,
+                 activity_epsilon=1e-1,
+                 activity_noise_stddev=0.0,
+                 test_hard=True,
+                 input_shape=(32, 32, 3),
+                 classes=10):
         self.use_bias = False
-        self.scale = True
-        self.input_shape = (height, width, depth)
+        self.scale = False
+        self.input_shape = input_shape
         self.classes = classes
 
         self.pool_size = 2
         self.pool_stride = 2
         self.padding = "same"
-        self.conv_type = "binary"
-        self.activation = "binary"
+        self.conv_type = conv_type
+        self.activation = activation
 
-        self.activity_epsilon = 1e-3
-        self.kernel_epsilon = 1e-3
-        self.dropout_rate = 0.1
-        self.weight_reg_factor = 1e-5
+        self.kernel_epsilon = kernel_epsilon
+        self.kernel_noise_stddev = kernel_noise_stddev
+        self.activity_epsilon = activity_epsilon
+        self.activity_noise_stddev = activity_noise_stddev
+
+        self.test_hard = test_hard
+        self.weight_reg_factor = 1e-6
+        self.dropout_rate = 0.5
 
         self.filters_1 = 32
         self.repeats_1 = 2
@@ -47,6 +60,7 @@ class SimpleNet():
             x = Binarization(
                 epsilon=self.activity_epsilon,
                 activity_regularizer=self._binary_reg,
+                test_hard=self.test_hard,
                 name=activation_name)(x)
         elif (self.activation == "prelu"):
             if is_dense:
@@ -60,7 +74,7 @@ class SimpleNet():
     def _batch_norm(self, x_input, name):
         return BatchNormalization(scale=self.scale, name=name + "_bn")(x_input)
 
-    def _conv_block(self, x, filters,  pool, name):
+    def _conv_block(self, x, filters, pool, name):
         layer_name = name + "_conv"
         if self.conv_type == "full":
             x = Conv2D(
@@ -75,6 +89,8 @@ class SimpleNet():
                 kernel_size=3,
                 kernel_regularizer=self._binary_reg,
                 kernel_epsilon=self.kernel_epsilon,
+                kernel_noise_stddev=self.kernel_noise_stddev,
+                test_hard=self.test_hard,
                 use_bias=self.use_bias,
                 padding=self.padding,
                 name=layer_name)(x)
@@ -94,16 +110,10 @@ class SimpleNet():
             unit_name = name + "_b" + str(n)
             if n == (repeats - 1):
                 x = self._conv_block(
-                    x,
-                    filters=filters,
-                    pool=True,
-                    name=unit_name)
+                    x, filters=filters, pool=True, name=unit_name)
             else:
                 x = self._conv_block(
-                    x,
-                    filters=filters,
-                    pool=False,
-                    name=unit_name)
+                    x, filters=filters, pool=False, name=unit_name)
         return x
 
     def build(self, x):

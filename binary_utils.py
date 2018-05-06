@@ -16,17 +16,31 @@ from keras.utils import conv_utils
 from keras.legacy import interfaces
 
 EPSILON = 1e-3
+STDDEV = 0.0
 
 
-def binarization(x, epsilon=EPSILON, training=None):
+def binarization(x,
+                 epsilon=EPSILON,
+                 stddev=STDDEV,
+                 test_hard=True,
+                 training=None):
     def soft_binary():
+        # Add noise.
+        if stddev > 0.0:
+            x_noise = x + K.random_normal(
+                shape=K.shape(x), mean=0., stddev=stddev)
+        else:
+            x_noise = x
         # The factor (1 + eps) is to ensure that abs(x)=1 returns x.
-        return x * (1.0 + epsilon) / (K.abs(x) + epsilon)
+        return x_noise * (1.0 + epsilon) / (K.abs(x_noise) + epsilon)
 
     def hard_binary():
         return K.sign(x)
 
-    return K.in_train_phase(soft_binary, hard_binary, training=training)
+    if test_hard:
+        return K.in_train_phase(soft_binary, hard_binary, training=training)
+    else:
+        return soft_binary()
 
 
 class _Conv(Layer):
@@ -48,6 +62,8 @@ class _Conv(Layer):
                  kernel_constraint=None,
                  bias_constraint=None,
                  kernel_epsilon=EPSILON,
+                 kernel_noise_stddev=STDDEV,
+                 test_hard=True,
                  **kwargs):
         super(_Conv, self).__init__(**kwargs)
         self.rank = rank
@@ -70,6 +86,8 @@ class _Conv(Layer):
         self.bias_constraint = constraints.get(bias_constraint)
         self.input_spec = InputSpec(ndim=self.rank + 2)
         self.kernel_epsilon = kernel_epsilon
+        self.kernel_noise_stddev = kernel_noise_stddev
+        self.test_hard = test_hard
 
     def build(self, input_shape):
         if self.data_format == 'channels_first':
@@ -103,9 +121,13 @@ class _Conv(Layer):
         self.built = True
 
     def call(self, inputs, training=None):
-        self.kernel = K.clip(self.kernel, -1.0, 1.0)
+        #self.kernel = K.clip(self.kernel, -1.0, 1.0)
         binary_kernel = binarization(
-            self.kernel, epsilon=self.kernel_epsilon, training=training)
+            self.kernel,
+            epsilon=self.kernel_epsilon,
+            stddev=self.kernel_noise_stddev,
+            test_hard=self.test_hard,
+            training=training)
         if self.rank == 2:
             outputs = K.conv2d(
                 inputs,
@@ -233,15 +255,27 @@ class BinaryConv2D(_Conv):
 
 
 class Binarization(Layer):
-    def __init__(self, epsilon=EPSILON, activity_regularizer=None, **kwargs):
+    def __init__(self,
+                 epsilon=EPSILON,
+                 stddev=STDDEV,
+                 test_hard=True,
+                 activity_regularizer=None,
+                 **kwargs):
         super(Binarization, self).__init__(**kwargs)
         self.supports_masking = True
         self.activation = binarization
         self.epsilon = epsilon
+        self.stddev = stddev
+        self.test_hard = test_hard
         self.activity_regularizer = activity_regularizer
 
     def call(self, inputs, training=None):
-        return self.activation(inputs, epsilon=self.epsilon, training=training)
+        return self.activation(
+            inputs,
+            epsilon=self.epsilon,
+            stddev=self.stddev,
+            test_hard=self.test_hard,
+            training=training)
 
     def get_config(self):
         config = {
