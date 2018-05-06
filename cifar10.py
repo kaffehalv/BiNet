@@ -15,16 +15,16 @@ from math import cos, pi
 
 gpus = 1
 batch_size = max(128 * gpus, 32)
-epochs_half_period = 100
+epochs_half_period = 10
 epochs_end = max(epochs_half_period // 2, 2)
 epochs = 2 * epochs_half_period + epochs_end
 verbose = 2
 
 conv_type = "binary"
 activation = "binary"
-test_hard = False
-kernel_epsilon = 1e-3
-kernel_noise_stddev = 1e-3
+test_hard = True
+kernel_epsilon = 1e-4
+kernel_noise_stddev = 1e-2
 activity_epsilon = 1e-1
 activity_noise_stddev = 0.0
 
