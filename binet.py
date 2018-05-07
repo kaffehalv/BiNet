@@ -1,9 +1,6 @@
-from keras.layers import Conv2D, BatchNormalization, Activation
-from keras.layers import Dropout
-from keras.layers import MaxPooling2D
-from keras.layers import GlobalAveragePooling2D
-from keras.layers import Dense
-from keras.layers import Softmax
+from keras.layers import Conv2D, BatchNormalization, Activation, Dropout
+from keras.layers import MaxPooling2D, GlobalAveragePooling2D
+from keras.layers import Dense, Softmax
 from keras import backend as K
 from binet_utils import BinaryConv2D, Binarization, BinaryRegularizer
 
@@ -12,24 +9,31 @@ class BiNet():
     def __init__(self,
                  conv_type="binary",
                  activation="binary",
+                 weight_reg_strength=1e-6,
+                 activity_reg_strength=1e-6,
                  dropout_rate=0.0,
                  input_shape=(32, 32, 3),
                  classes=10):
-        self.use_bias = False
-        self.scale = False
+        self.conv_type = conv_type
+        self.activation = activation
+        self.weight_reg_strength = weight_reg_strength
+        self.activity_reg_strength = activity_reg_strength
+        self.dropout_rate = dropout_rate
         self.input_shape = input_shape
         self.classes = classes
 
-        self.pool_size = 2
-        self.pool_stride = 2
-        self.padding = "same"
-        self.conv_type = conv_type
-        self.activation = activation
+        # Conv bias unnecessary.
+        self.use_bias = False
 
-        self.weight_reg_factor = 1e-7
-        self.activity_reg_factor = 1e-7
-        self.dropout_rate = dropout_rate
+        # Batch norm scale unnecessary with binarization
+        # or piecewise linear activation functions.
+        if (self.activation == "binary") or (self.activation == "relu") or (
+                self.activation == "prelu"):
+            self.scale = False
+        else:
+            self.scale = True
 
+        ####### Network Architecture #######
         self.filters_1 = 32
         self.repeats_1 = 2
 
@@ -39,6 +43,12 @@ class BiNet():
         self.filters_3 = 128
         self.repeats_3 = 2
 
+        self.pool_size = 2
+        self.pool_stride = 2
+        self.padding = "same"
+        ####################################
+
+        # Just for naming layers.
         self.module_id = 0
 
     def _activation(self, x, name, is_dense=False):
@@ -46,7 +56,7 @@ class BiNet():
         if (self.activation == "binary"):
             x = Binarization(
                 activity_regularizer=BinaryRegularizer(
-                    self.activity_reg_factor),
+                    self.activity_reg_strength),
                 name=activation_name)(x)
         elif (self.activation == "prelu"):
             if is_dense:
@@ -70,7 +80,7 @@ class BiNet():
             x = BinaryConv2D(
                 filters,
                 kernel_size=3,
-                kernel_regularizer=BinaryRegularizer(self.weight_reg_factor),
+                kernel_regularizer=BinaryRegularizer(self.weight_reg_strength),
                 padding=self.padding,
                 name=layer_name)(x)
         if pool:
@@ -89,13 +99,13 @@ class BiNet():
         self.module_id += 1
         name = "m" + str(self.module_id)
         for n in range(repeats):
-            unit_name = name + "_b" + str(n)
+            block_name = name + "_b" + str(n)
             if n == (repeats - 1):
                 x = self._conv_block(
-                    x, filters=filters, pool=True, name=unit_name)
+                    x, filters=filters, pool=True, name=block_name)
             else:
                 x = self._conv_block(
-                    x, filters=filters, pool=False, name=unit_name)
+                    x, filters=filters, pool=False, name=block_name)
         return x
 
     def build(self, x):

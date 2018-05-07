@@ -5,7 +5,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import tensorflow as tf
 from keras import backend as K
 from keras import activations, initializers, regularizers, constraints
 from keras.engine.topology import Layer, InputSpec
@@ -15,14 +14,15 @@ from keras.legacy import interfaces
 
 def _binarization(x, training=None):
     def binary():
-        # This method is only here to be sure that the binarization is done like expected.
+        # This method is only here to be sure that the binarization
+        # behaves like expected. Technically, it is completely unnecessary.
         return K.sign(x)
 
     def sneaky_fucker_binary():
         # Trick by Sergey Ioffe apparently.
         forward_behavior = K.sign(x)
         backward_behavior = K.clip(x, -1., 1.)
-        return backward_behavior + tf.stop_gradient(
+        return backward_behavior + K.stop_gradient(
             forward_behavior - backward_behavior)
 
     return K.in_train_phase(sneaky_fucker_binary, binary, training=training)
@@ -101,8 +101,6 @@ class BinaryConv2D(Layer):
     def build(self, input_shape):
         if self.data_format == 'channels_first':
             channel_axis = 1
-            raise ValueError(
-                "If you ask Niclas nice he might add Theano support.")
         else:
             channel_axis = -1
         if input_shape[channel_axis] is None:
