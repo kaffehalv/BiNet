@@ -9,9 +9,7 @@ from keras.callbacks import LearningRateScheduler, ModelCheckpoint
 from keras.datasets import cifar10, cifar100
 from keras import optimizers
 from keras import callbacks
-from SataNet import SataNet
-from BiNet import BiNet
-from math import cos, pi
+from binet import BiNet
 
 gpus = 1
 batch_size = max(128 * gpus, 32)
@@ -22,23 +20,17 @@ verbose = 2
 
 conv_type = "binary"
 activation = "binary"
-test_hard = True
-kernel_epsilon = 1e-4
-kernel_noise_stddev = 1e-2
-activity_epsilon = 1e-1
-activity_noise_stddev = 0.0
+if conv_type == "binary" or activation == "binary":
+    dropout_rate = 0.0
+else:
+    dropout_rate = 0.5
 
-if conv_type == "full":
-    lr_max = 1e0
-elif conv_type == "binary":
-    lr_max = 1e-1
-if activation == "binary":
-    lr_max *= activity_epsilon
+lr_max = 1e0
 lr_init = 1e-1 * lr_max
 lr_min = 1e-3 * lr_max
 momentum = 0.9
 weights_path = "C:/Users/niclas/ML-Projects/cifar/weights.hdf5"
-full_weights_path = "C:/Users/niclas/ML-Projects/cifar/full_weights.hdf5"
+best_weights_path = "C:/Users/niclas/ML-Projects/cifar/best_weights.hdf5"
 
 
 def interpolate(val0, val1, t):
@@ -108,18 +100,14 @@ with tf.device(device):
     network = BiNet(
         conv_type=conv_type,
         activation=activation,
-        kernel_epsilon=kernel_epsilon,
-        kernel_noise_stddev=kernel_noise_stddev,
-        activity_epsilon=activity_epsilon,
-        activity_noise_stddev=activity_noise_stddev,
-        test_hard=test_hard,
+        dropout_rate=dropout_rate,
         input_shape=input_shape,
         classes=num_classes)
     model_output = network.build(model_input)
     model = Model(inputs=model_input, outputs=model_output)
     model.summary()
-    model.load_weights(weights_path)
-    #model.load_weights(full_weights_path)
+    #model.load_weights(weights_path)
+    model.load_weights(best_weights_path)
 
 batches_per_epoch = len(x_train) // batch_size
 
