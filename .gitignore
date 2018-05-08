@@ -1,2 +1,10 @@
-__pycache__/
+bin
+include
+lib
+share
+pip-selfcheck.json
+*~
+*#
+*.pyc
+__pycache__
 weights.hdf5
