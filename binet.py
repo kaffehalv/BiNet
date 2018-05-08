@@ -1,8 +1,8 @@
-from keras.layers import Conv2D, BatchNormalization, Activation, Dropout
+from keras.layers import Conv2D, DepthwiseConv2D, BatchNormalization, Activation, Dropout
 from keras.layers import MaxPooling2D, GlobalAveragePooling2D
 from keras.layers import Dense, Softmax
 from keras import backend as K
-from binet_utils import BinaryConv2D, Binarization, BinaryRegularizer
+from binet_utils import BinaryConv2D, BinaryDepthwiseConv2D, Binarization, BinaryRegularizer
 
 
 class BiNet():
@@ -25,13 +25,8 @@ class BiNet():
         # Conv bias unnecessary.
         self.use_bias = False
 
-        # Batch norm scale unnecessary with binarization
-        # or piecewise linear activation functions.
-        if (self.activation == "binary") or (self.activation == "relu") or (
-                self.activation == "prelu"):
-            self.scale = False
-        else:
-            self.scale = True
+        # Batch norm scale unnecessary with binarization.
+        self.scale = False
 
         ####### Network Architecture #######
         self.filters_1 = 32
@@ -68,28 +63,61 @@ class BiNet():
         return x
 
     def _conv_block(self, x, filters, pool, name):
-        layer_name = name + "_conv"
-        if self.conv_type == "full":
+        if self.conv_type == "float":
+            layer_name = name
             x = Conv2D(
                 filters,
                 kernel_size=3,
                 use_bias=self.use_bias,
                 padding=self.padding,
-                name=layer_name)(x)
+                name=layer_name + "_conv")(x)
+        elif self.conv_type == "float_dw":
+            layer_name = name + "_dw"
+            x = DepthwiseConv2D(
+                kernel_size=3,
+                use_bias=self.use_bias,
+                padding=self.padding,
+                name=layer_name+ "_conv")(x)
+            x = self._batch_norm(x, name=layer_name)
+            x = self._activation(x, name=layer_name)
+            layer_name = name + "_pw"
+            x = Conv2D(
+                filters,
+                kernel_size=1,
+                use_bias=self.use_bias,
+                padding=self.padding,
+                name=layer_name + "_conv")(x)
         elif self.conv_type == "binary":
+            layer_name = name
             x = BinaryConv2D(
                 filters,
                 kernel_size=3,
                 kernel_regularizer=BinaryRegularizer(self.weight_reg_strength),
                 padding=self.padding,
-                name=layer_name)(x)
+                name=layer_name+ "_conv")(x)
+        elif self.conv_type == "binary_dw":
+            layer_name = name + "_dw"
+            x = BinaryDepthwiseConv2D(
+                kernel_size=3,
+                depthwise_regularizer=BinaryRegularizer(self.weight_reg_strength),
+                padding=self.padding,
+                name=layer_name+ "_conv")(x)
+            x = self._batch_norm(x, name=layer_name)
+            x = self._activation(x, name=layer_name)
+            layer_name = name + "_pw"
+            x = BinaryConv2D(
+                filters,
+                kernel_size=1,
+                kernel_regularizer=BinaryRegularizer(self.weight_reg_strength),
+                padding=self.padding,
+                name=layer_name + "_conv")(x)
         if pool:
             x = MaxPooling2D(
                 pool_size=self.pool_size,
                 strides=self.pool_stride,
                 name=name + "_maxpool")(x)
-        x = self._batch_norm(x, name=name)
-        x = self._activation(x, name=name)
+        x = self._batch_norm(x, name=layer_name)
+        x = self._activation(x, name=layer_name)
         return x
 
     def _batch_norm(self, x, name):

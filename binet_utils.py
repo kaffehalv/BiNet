@@ -190,3 +190,132 @@ class BinaryConv2D(Layer):
         }
         base_config = super(BinaryConv2D, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
+class BinaryDepthwiseConv2D(Layer):
+    def __init__(self,
+                 kernel_size,
+                 strides=(1, 1),
+                 padding='valid',
+                 depth_multiplier=1,
+                 data_format=None,
+                 dilation_rate=1,
+                 activation=None,
+                 depthwise_initializer='glorot_uniform',
+                 depthwise_regularizer=None,
+                 activity_regularizer=None,
+                 depthwise_constraint=None,
+                 **kwargs):
+        super(BinaryDepthwiseConv2D, self).__init__(**kwargs)
+        self.rank = 2
+        self.kernel_size = conv_utils.normalize_tuple(kernel_size, self.rank,
+                                                      'kernel_size')
+        self.strides = conv_utils.normalize_tuple(strides, self.rank,
+                                                  'strides')
+        self.padding = conv_utils.normalize_padding(padding)
+        self.data_format = conv_utils.normalize_data_format(data_format)
+        self.dilation_rate = conv_utils.normalize_tuple(
+            dilation_rate, self.rank, 'dilation_rate')
+        self.activation = activations.get(activation)
+        self.activity_regularizer = regularizers.get(activity_regularizer)
+        self.input_spec = InputSpec(ndim=self.rank + 2)
+
+        self.depth_multiplier = depth_multiplier
+        self.depthwise_initializer = initializers.get(depthwise_initializer)
+        self.depthwise_regularizer = regularizers.get(depthwise_regularizer)
+        self.depthwise_constraint = constraints.get(depthwise_constraint)
+
+    def build(self, input_shape):
+        if len(input_shape) < 4:
+            raise ValueError('Inputs to `BinaryDepthwiseConv2D` should have rank 4. '
+                             'Received input shape:', str(input_shape))
+        if self.data_format == 'channels_first':
+            channel_axis = 1
+        else:
+            channel_axis = 3
+        if input_shape[channel_axis] is None:
+            raise ValueError('The channel dimension of the inputs to '
+                             '`BinaryDepthwiseConv2D` '
+                             'should be defined. Found `None`.')
+        input_dim = int(input_shape[channel_axis])
+        depthwise_kernel_shape = (self.kernel_size[0],
+                                  self.kernel_size[1],
+                                  input_dim,
+                                  self.depth_multiplier)
+
+        self.depthwise_kernel = self.add_weight(
+            shape=depthwise_kernel_shape,
+            initializer=self.depthwise_initializer,
+            name='depthwise_kernel',
+            regularizer=self.depthwise_regularizer,
+            constraint=self.depthwise_constraint)
+
+        # Set input spec.
+        self.input_spec = InputSpec(ndim=4, axes={channel_axis: input_dim})
+        self.built = True
+
+    def call(self, inputs, training=None):
+        # Binarize the kernel.
+        binary_kernel = _binarization(self.depthwise_kernel, training=training)
+
+        outputs = K.depthwise_conv2d(
+            inputs,
+            binary_kernel,
+            strides=self.strides,
+            padding=self.padding,
+            dilation_rate=self.dilation_rate,
+            data_format=self.data_format)
+
+        if self.activation is not None:
+            return self.activation(outputs)
+
+        return outputs
+
+    def compute_output_shape(self, input_shape):
+        if self.data_format == 'channels_first':
+            rows = input_shape[2]
+            cols = input_shape[3]
+            out_filters = input_shape[1] * self.depth_multiplier
+        elif self.data_format == 'channels_last':
+            rows = input_shape[1]
+            cols = input_shape[2]
+            out_filters = input_shape[3] * self.depth_multiplier
+
+        rows = conv_utils.conv_output_length(rows, self.kernel_size[0],
+                                             self.padding,
+                                             self.strides[0])
+        cols = conv_utils.conv_output_length(cols, self.kernel_size[1],
+                                             self.padding,
+                                             self.strides[1])
+        if self.data_format == 'channels_first':
+            return (input_shape[0], out_filters, rows, cols)
+        elif self.data_format == 'channels_last':
+            return (input_shape[0], rows, cols, out_filters)
+
+    def get_config(self):
+        config = {
+            'filters':
+            self.filters,
+            'kernel_size':
+            self.kernel_size,
+            'strides':
+            self.strides,
+            'padding':
+            self.padding,
+            'data_format':
+            self.data_format,
+            'dilation_rate':
+            self.dilation_rate,
+            'activation':
+            activations.serialize(self.activation),
+            'depthwise_initializer':
+            initializers.serialize(self.depthwise_initializer),
+            'depthwise_regularizer':
+            regularizers.serialize(self.depthwise_regularizer),
+            'activity_regularizer':
+            regularizers.serialize(self.activity_regularizer),
+            'depthwise_constraint':
+            constraints.serialize(self.depthwise_constraint)
+        }
+        base_config = super(BinaryDepthwiseConv2D, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))

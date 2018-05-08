@@ -13,24 +13,28 @@ from binet import BiNet
 
 gpus = 1
 batch_size = max(128 * gpus, 32)
-epochs_half_period = 10
+epochs_half_period = 100
 epochs_end = max(epochs_half_period // 2, 2)
 epochs = 2 * epochs_half_period + epochs_end
-verbose = 2
+verbose = 1
 
 conv_type = "binary"
 activation = "binary"
-if conv_type == "binary" or activation == "binary":
+if "binary" in conv_type or "binary" in activation:
     dropout_rate = 0.0
 else:
     dropout_rate = 0.5
+
+load_weights = True
 
 lr_max = 1e0
 lr_init = 1e-1 * lr_max
 lr_min = 1e-3 * lr_max
 momentum = 0.9
-weights_path = "C:/Users/niclas/ML-Projects/cifar/weights.hdf5"
-best_weights_path = "C:/Users/niclas/ML-Projects/cifar/best_weights.hdf5"
+weights_path = "/home/niclasw/BiNet/weights.hdf5"
+best_weights_path = "/home/niclasw/BiNet/best_weights.hdf5"
+#weights_path = "C:/Users/niclas/ML-Projects/cifar/weights.hdf5"
+#best_weights_path = "C:/Users/niclas/ML-Projects/cifar/best_weights.hdf5"
 
 
 def interpolate(val0, val1, t):
@@ -107,13 +111,17 @@ with tf.device(device):
     model = Model(inputs=model_input, outputs=model_output)
     model.summary()
     #model.load_weights(weights_path)
-    model.load_weights(best_weights_path)
+    #model.load_weights(best_weights_path)
 
 batches_per_epoch = len(x_train) // batch_size
 
 print("Starting training!")
 if gpus > 1:
     parallel_model = multi_gpu_model(model, gpus=gpus)
+
+    #if load_weights:
+        #parallel_model.load_weights(weights_path)
+        #parallel_model.load_weights(best_weights_path)
 
     # Compile model
     parallel_model.compile(
@@ -132,6 +140,10 @@ if gpus > 1:
         verbose=verbose,
         callbacks=callbacks)
 else:
+    if load_weights:
+        model.load_weights(weights_path)
+        model.load_weights(best_weights_path)
+
     # Compile model
     model.compile(
         loss="categorical_crossentropy",
@@ -149,28 +161,29 @@ else:
         verbose=verbose,
         callbacks=callbacks)
 
-model.load_weights(weights_path)
-scores = model.evaluate_generator(
-    val_datagen.flow(x_test, y_test, batch_size=batch_size),
-    steps=validation_steps)
-print("FLOAT WEIGHTS: loss = %f, acc = %f " % (scores[0], scores[1]))
+if gpus <= 1:
+    model.load_weights(weights_path)
+    scores = model.evaluate_generator(
+        val_datagen.flow(x_test, y_test, batch_size=batch_size),
+        steps=validation_steps)
+    print("FLOAT WEIGHTS: loss = %f, acc = %f " % (scores[0], scores[1]))
 
-for l in model.layers:
-    if "conv" in l.name:
-        w = l.get_weights()[0]
-        mu = np.mean(w)
-        sigma = np.sqrt(np.mean((w - mu)**2))
-        minval = np.amin(w)
-        maxval = np.amax(w)
-        print("mu = %f, sigma = %f, min = %f, max = %f" % (mu, sigma, minval,
-                                                           maxval))
-for l in model.layers:
-    if "conv" in l.name:
-        w = l.get_weights()
-        l.set_weights(np.sign(w))
+    for l in model.layers:
+        if "conv" in l.name:
+            w = l.get_weights()[0]
+            mu = np.mean(w)
+            sigma = np.sqrt(np.mean((w - mu)**2))
+            minval = np.amin(w)
+            maxval = np.amax(w)
+            print("mu = %f, sigma = %f, min = %f, max = %f" % (mu, sigma, minval,
+                                                               maxval))
+    for l in model.layers:
+        if "conv" in l.name:
+            w = l.get_weights()
+            l.set_weights(np.sign(w))
 
-scores_binary = model.evaluate_generator(
-    val_datagen.flow(x_test, y_test, batch_size=batch_size),
-    steps=validation_steps)
-print("BINARY WEIGHTS: loss = %f, acc = %f " % (scores_binary[0],
-                                                scores_binary[1]))
+    scores_binary = model.evaluate_generator(
+        val_datagen.flow(x_test, y_test, batch_size=batch_size),
+        steps=validation_steps)
+    print("BINARY WEIGHTS: loss = %f, acc = %f " % (scores_binary[0],
+                                                    scores_binary[1]))
