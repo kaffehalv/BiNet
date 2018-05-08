@@ -56,8 +56,8 @@ class BinaryRegularizer(regularizers.Regularizer):
 
     def __call__(self, x):
         if self.scale:
-            x2 = K.square(x)
-            regularization = K.sum(self.scale * (K.square(x2) - 2. * x2 + 1.))
+            regularization = K.sum(
+                self.scale * K.square(K.relu(K.abs(x) - 1.)))
         else:
             regularization = 0.
         return regularization
@@ -122,6 +122,9 @@ class BinaryConv2D(Layer):
         self.built = True
 
     def call(self, inputs, training=None):
+        # Clip weights.
+        self.kernel = K.clip(self.kernel, -1., 1.)
+
         # Binarize the kernel.
         binary_kernel = _binarization(self.kernel, training=training)
 
@@ -227,8 +230,9 @@ class BinaryDepthwiseConv2D(Layer):
 
     def build(self, input_shape):
         if len(input_shape) < 4:
-            raise ValueError('Inputs to `BinaryDepthwiseConv2D` should have rank 4. '
-                             'Received input shape:', str(input_shape))
+            raise ValueError(
+                'Inputs to `BinaryDepthwiseConv2D` should have rank 4. '
+                'Received input shape:', str(input_shape))
         if self.data_format == 'channels_first':
             channel_axis = 1
         else:
@@ -238,10 +242,8 @@ class BinaryDepthwiseConv2D(Layer):
                              '`BinaryDepthwiseConv2D` '
                              'should be defined. Found `None`.')
         input_dim = int(input_shape[channel_axis])
-        depthwise_kernel_shape = (self.kernel_size[0],
-                                  self.kernel_size[1],
-                                  input_dim,
-                                  self.depth_multiplier)
+        depthwise_kernel_shape = (self.kernel_size[0], self.kernel_size[1],
+                                  input_dim, self.depth_multiplier)
 
         self.depthwise_kernel = self.add_weight(
             shape=depthwise_kernel_shape,
@@ -255,6 +257,9 @@ class BinaryDepthwiseConv2D(Layer):
         self.built = True
 
     def call(self, inputs, training=None):
+        # Clip weights.
+        self.depthwise_kernel = K.clip(self.depthwise_kernel, -1., 1.)
+
         # Binarize the kernel.
         binary_kernel = _binarization(self.depthwise_kernel, training=training)
 
@@ -282,11 +287,9 @@ class BinaryDepthwiseConv2D(Layer):
             out_filters = input_shape[3] * self.depth_multiplier
 
         rows = conv_utils.conv_output_length(rows, self.kernel_size[0],
-                                             self.padding,
-                                             self.strides[0])
+                                             self.padding, self.strides[0])
         cols = conv_utils.conv_output_length(cols, self.kernel_size[1],
-                                             self.padding,
-                                             self.strides[1])
+                                             self.padding, self.strides[1])
         if self.data_format == 'channels_first':
             return (input_shape[0], out_filters, rows, cols)
         elif self.data_format == 'channels_last':

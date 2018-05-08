@@ -9,8 +9,8 @@ class BiNet():
     def __init__(self,
                  conv_type="binary",
                  activation="binary",
-                 weight_reg_strength=1e-6,
-                 activity_reg_strength=1e-6,
+                 weight_reg_strength=0.0,
+                 activity_reg_strength=0.0,
                  dropout_rate=0.0,
                  input_shape=(32, 32, 3),
                  classes=10):
@@ -21,6 +21,19 @@ class BiNet():
         self.dropout_rate = dropout_rate
         self.input_shape = input_shape
         self.classes = classes
+
+        # Set up the regularizers.
+        if self.weight_reg_strength > 0.:
+            self.weight_regularizer = BinaryRegularizer(
+                self.weight_reg_strength)
+        else:
+            self.weight_regularizer = None
+
+        if self.activity_reg_strength > 0.:
+            self.activity_regularizer = BinaryRegularizer(
+                self.activity_reg_strength)
+        else:
+            self.activity_regularizer = None
 
         # Conv bias unnecessary.
         self.use_bias = False
@@ -50,8 +63,7 @@ class BiNet():
         activation_name = name + "_" + self.activation
         if (self.activation == "binary"):
             x = Binarization(
-                activity_regularizer=BinaryRegularizer(
-                    self.activity_reg_strength),
+                activity_regularizer=self.activity_regularizer,
                 name=activation_name)(x)
         elif (self.activation == "prelu"):
             if is_dense:
@@ -77,7 +89,7 @@ class BiNet():
                 kernel_size=3,
                 use_bias=self.use_bias,
                 padding=self.padding,
-                name=layer_name+ "_conv")(x)
+                name=layer_name + "_conv")(x)
             x = self._batch_norm(x, name=layer_name)
             x = self._activation(x, name=layer_name)
             layer_name = name + "_pw"
@@ -92,23 +104,23 @@ class BiNet():
             x = BinaryConv2D(
                 filters,
                 kernel_size=3,
-                kernel_regularizer=BinaryRegularizer(self.weight_reg_strength),
+                kernel_regularizer=self.weight_regularizer,
                 padding=self.padding,
-                name=layer_name+ "_conv")(x)
+                name=layer_name + "_conv")(x)
         elif self.conv_type == "binary_dw":
             layer_name = name + "_dw"
             x = BinaryDepthwiseConv2D(
                 kernel_size=3,
-                depthwise_regularizer=BinaryRegularizer(self.weight_reg_strength),
+                depthwise_regularizer=self.weight_regularizer,
                 padding=self.padding,
-                name=layer_name+ "_conv")(x)
+                name=layer_name + "_conv")(x)
             x = self._batch_norm(x, name=layer_name)
             x = self._activation(x, name=layer_name)
             layer_name = name + "_pw"
             x = BinaryConv2D(
                 filters,
                 kernel_size=1,
-                kernel_regularizer=BinaryRegularizer(self.weight_reg_strength),
+                kernel_regularizer=self.weight_regularizer,
                 padding=self.padding,
                 name=layer_name + "_conv")(x)
         if pool:
@@ -138,9 +150,7 @@ class BiNet():
 
     def build(self, x):
         x = self._module(x, filters=self.filters_1, repeats=self.repeats_1)
-
         x = self._module(x, filters=self.filters_2, repeats=self.repeats_2)
-
         x = self._module(x, filters=self.filters_3, repeats=self.repeats_3)
 
         x = GlobalAveragePooling2D(name="global_avg_pool")(x)
