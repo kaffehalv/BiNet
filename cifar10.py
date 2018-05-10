@@ -13,22 +13,23 @@ from binet import BiNet
 
 on_linux = False
 gpus = 2
-batch_size = max(128 * gpus, 32)
+batch_size = 64
 epochs_half_period = 40
 epochs_end = max(epochs_half_period // 2, 2)
 epochs = 2 * epochs_half_period + epochs_end
 verbose = 2
 
-conv_type = "binary"
+weight_type = "binary"
 activation = "binary"
-weight_reg_strength = 1e-6
+shrink = 1
+weight_reg_strength = 0.0
 activity_reg_strength = 0.0
-if "binary" in conv_type or "binary" in activation:
+if "binary" in weight_type or "binary" in activation:
     dropout_rate = 0.0
 else:
     dropout_rate = 0.5
 
-load_weights = True
+load_weights = False
 
 lr_max = 2e0
 lr_init = 1e-1 * lr_max
@@ -40,9 +41,9 @@ if on_linux:
     multi_weights_path = "/home/niclasw/BiNet/multi_weights.hdf5"
     best_weights_path = "/home/niclasw/BiNet/best_weights.hdf5"
 else:
-    weights_path = "C:/Users/niclas/ML-Projects/cifar/weights.hdf5"
-    multi_weights_path = "C:/Users/niclas/ML-Projects/cifar/multi_weights.hdf5"
-    best_weights_path = "C:/Users/niclas/ML-Projects/cifar/best_weights.hdf5"
+    weights_path = "C:/Users/niclas/ML-Projects/BiNet/weights.hdf5"
+    multi_weights_path = "C:/Users/niclas/ML-Projects/BiNet/multi_weights.hdf5"
+    best_weights_path = "C:/Users/niclas/ML-Projects/BiNet/best_weights.hdf5"
 
 
 def interpolate(val0, val1, t):
@@ -115,8 +116,9 @@ with tf.device(device):
     input_shape = (32, 32, 3)
     model_input = Input(shape=input_shape)
     network = BiNet(
-        conv_type=conv_type,
+        weight_type=weight_type,
         activation=activation,
+        shrink=shrink,
         weight_reg_strength=weight_reg_strength,
         activity_reg_strength=activity_reg_strength,
         dropout_rate=dropout_rate,

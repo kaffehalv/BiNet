@@ -1,20 +1,21 @@
 from keras.layers import Conv2D, DepthwiseConv2D, BatchNormalization, Activation, Dropout
-from keras.layers import MaxPooling2D, GlobalAveragePooling2D
+from keras.layers import MaxPooling2D, Flatten
 from keras.layers import Dense, Softmax
 from keras import backend as K
-from binet_utils import BinaryConv2D, BinaryDepthwiseConv2D, Binarization, BinaryRegularizer
+from binet_utils import BinaryConv2D, BinaryDense, BinaryDepthwiseConv2D, Binarization, BinaryRegularizer
 
 
 class BiNet():
     def __init__(self,
-                 conv_type="binary",
+                 weight_type="binary",
                  activation="binary",
+                 shrink=1,
                  weight_reg_strength=0.0,
                  activity_reg_strength=0.0,
                  dropout_rate=0.0,
                  input_shape=(32, 32, 3),
                  classes=10):
-        self.conv_type = conv_type
+        self.weight_type = weight_type
         self.activation = activation
         self.weight_reg_strength = weight_reg_strength
         self.activity_reg_strength = activity_reg_strength
@@ -35,21 +36,24 @@ class BiNet():
         else:
             self.activity_regularizer = None
 
-        # Conv bias unnecessary.
+        # Bias unnecessary with batch norm.
         self.use_bias = False
 
         # Batch norm scale unnecessary with binarization.
         self.scale = False
 
         ####### Network Architecture #######
-        self.filters_1 = 32
+        self.filters_1 = 128 // shrink
         self.repeats_1 = 2
 
-        self.filters_2 = 64
+        self.filters_2 = 256 // shrink
         self.repeats_2 = 2
 
-        self.filters_3 = 128
+        self.filters_3 = 512 // shrink
         self.repeats_3 = 2
+
+        self.dense_1 = 1024 // shrink
+        self.dense_2 = 1024 // shrink
 
         self.pool_size = 2
         self.pool_stride = 2
@@ -65,17 +69,22 @@ class BiNet():
             x = Binarization(
                 activity_regularizer=self.activity_regularizer,
                 name=activation_name)(x)
-        elif (self.activation == "prelu"):
-            if is_dense:
-                x = PReLU(name=activation_name)(x)
-            else:
-                x = PReLU(shared_axes=[1, 2], name=activation_name)(x)
         else:
             x = Activation(self.activation, name=activation_name)(x)
         return x
 
-    def _conv_block(self, x, filters, pool, name):
-        if self.conv_type == "float":
+    def _dense_block(self, x, units, name, activate=True):
+        if self.weight_type == "float":
+            x = Dense(units, use_bias=self.use_bias, name=name + "_dense")(x)
+        elif self.weight_type == "binary":
+            x = BinaryDense(units, name=name + "_dense")(x)
+        x = self._batch_norm(x, name=name)
+        if activate:
+            x = self._activation(x, name=name)
+        return x
+
+    def _conv_block(self, x, filters, pool, name, activate=True):
+        if self.weight_type == "float":
             layer_name = name
             x = Conv2D(
                 filters,
@@ -83,43 +92,11 @@ class BiNet():
                 use_bias=self.use_bias,
                 padding=self.padding,
                 name=layer_name + "_conv")(x)
-        elif self.conv_type == "float_dw":
-            layer_name = name + "_dw"
-            x = DepthwiseConv2D(
-                kernel_size=3,
-                use_bias=self.use_bias,
-                padding=self.padding,
-                name=layer_name + "_conv")(x)
-            x = self._batch_norm(x, name=layer_name)
-            x = self._activation(x, name=layer_name)
-            layer_name = name + "_pw"
-            x = Conv2D(
-                filters,
-                kernel_size=1,
-                use_bias=self.use_bias,
-                padding=self.padding,
-                name=layer_name + "_conv")(x)
-        elif self.conv_type == "binary":
+        elif self.weight_type == "binary":
             layer_name = name
             x = BinaryConv2D(
                 filters,
                 kernel_size=3,
-                kernel_regularizer=self.weight_regularizer,
-                padding=self.padding,
-                name=layer_name + "_conv")(x)
-        elif self.conv_type == "binary_dw":
-            layer_name = name + "_dw"
-            x = BinaryDepthwiseConv2D(
-                kernel_size=3,
-                depthwise_regularizer=self.weight_regularizer,
-                padding=self.padding,
-                name=layer_name + "_conv")(x)
-            x = self._batch_norm(x, name=layer_name)
-            x = self._activation(x, name=layer_name)
-            layer_name = name + "_pw"
-            x = BinaryConv2D(
-                filters,
-                kernel_size=1,
                 kernel_regularizer=self.weight_regularizer,
                 padding=self.padding,
                 name=layer_name + "_conv")(x)
@@ -129,7 +106,8 @@ class BiNet():
                 strides=self.pool_stride,
                 name=name + "_maxpool")(x)
         x = self._batch_norm(x, name=layer_name)
-        x = self._activation(x, name=layer_name)
+        if activate:
+            x = self._activation(x, name=layer_name)
         return x
 
     def _batch_norm(self, x, name):
@@ -153,11 +131,13 @@ class BiNet():
         x = self._module(x, filters=self.filters_2, repeats=self.repeats_2)
         x = self._module(x, filters=self.filters_3, repeats=self.repeats_3)
 
-        x = GlobalAveragePooling2D(name="global_avg_pool")(x)
+        x = Flatten(name="flatten")(x)
 
         if self.dropout_rate > 0.0:
             x = Dropout(rate=self.dropout_rate, name="dropout")(x)
 
-        x = Dense(self.classes, name="dense")(x)
+        x = self._dense_block(x, self.dense_1, name="fc1")
+        x = self._dense_block(x, self.dense_2, name="fc2")
+        x = self._dense_block(x, self.classes, name="output", activate=False)
         x = Softmax(name="softmax")(x)
         return x

@@ -8,3 +8,4 @@ pip-selfcheck.json
 *.pyc
 __pycache__
 weights.hdf5
+multi_weights.hdf5

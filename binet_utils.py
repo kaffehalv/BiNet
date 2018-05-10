@@ -322,3 +322,76 @@ class BinaryDepthwiseConv2D(Layer):
         }
         base_config = super(BinaryDepthwiseConv2D, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
+class BinaryDense(Layer):
+    def __init__(self,
+                 units,
+                 activation=None,
+                 kernel_initializer='glorot_uniform',
+                 kernel_regularizer=None,
+                 activity_regularizer=None,
+                 kernel_constraint=None,
+                 **kwargs):
+        if 'input_shape' not in kwargs and 'input_dim' in kwargs:
+            kwargs['input_shape'] = (kwargs.pop('input_dim'), )
+        super(BinaryDense, self).__init__(**kwargs)
+        self.units = units
+        self.activation = activations.get(activation)
+        self.kernel_initializer = initializers.get(kernel_initializer)
+        self.kernel_regularizer = regularizers.get(kernel_regularizer)
+        self.activity_regularizer = regularizers.get(activity_regularizer)
+        self.kernel_constraint = constraints.get(kernel_constraint)
+        self.input_spec = InputSpec(min_ndim=2)
+        self.supports_masking = True
+
+    def build(self, input_shape):
+        assert len(input_shape) >= 2
+        input_dim = input_shape[-1]
+
+        self.kernel = self.add_weight(
+            shape=(input_dim, self.units),
+            initializer=self.kernel_initializer,
+            name='kernel',
+            regularizer=self.kernel_regularizer,
+            constraint=self.kernel_constraint)
+
+        self.input_spec = InputSpec(min_ndim=2, axes={-1: input_dim})
+        self.built = True
+
+    def call(self, inputs, training=None):
+        # Clip weights.
+        self.kernel = K.clip(self.kernel, -1., 1.)
+
+        # Binarize the kernel.
+        binary_kernel = _binarization(self.kernel, training=training)
+
+        output = K.dot(inputs, binary_kernel)
+        if self.activation is not None:
+            output = self.activation(output)
+        return output
+
+    def compute_output_shape(self, input_shape):
+        assert input_shape and len(input_shape) >= 2
+        assert input_shape[-1]
+        output_shape = list(input_shape)
+        output_shape[-1] = self.units
+        return tuple(output_shape)
+
+    def get_config(self):
+        config = {
+            'units':
+            self.units,
+            'activation':
+            activations.serialize(self.activation),
+            'kernel_initializer':
+            initializers.serialize(self.kernel_initializer),
+            'kernel_regularizer':
+            regularizers.serialize(self.kernel_regularizer),
+            'activity_regularizer':
+            regularizers.serialize(self.activity_regularizer),
+            'kernel_constraint':
+            constraints.serialize(self.kernel_constraint),
+        }
+        base_config = super(BinaryDense, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
