@@ -14,7 +14,7 @@ from binet import BiNet
 on_linux = False
 gpus = 2
 batch_size = 64
-epochs_half_period = 40
+epochs_half_period = 200
 epochs_end = max(epochs_half_period // 2, 2)
 epochs = 2 * epochs_half_period + epochs_end
 verbose = 2
