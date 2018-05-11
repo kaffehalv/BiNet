@@ -10,8 +10,8 @@ class BiNet():
                  weight_type="binary",
                  activation="binary",
                  shrink=1,
-                 weight_reg_strength=0.0,
-                 activity_reg_strength=0.0,
+                 weight_reg_strength=1.0,
+                 activity_reg_strength=1.0,
                  dropout_rate=0.0,
                  input_shape=(32, 32, 3),
                  classes=10):
@@ -118,12 +118,9 @@ class BiNet():
         name = "m" + str(self.module_id)
         for n in range(repeats):
             block_name = name + "_b" + str(n)
-            if n == (repeats - 1):
-                x = self._conv_block(
-                    x, filters=filters, pool=True, name=block_name)
-            else:
-                x = self._conv_block(
-                    x, filters=filters, pool=False, name=block_name)
+            pool = n == (repeats - 1)
+            x = self._conv_block(
+                x, filters=filters, pool=pool, name=block_name)
         return x
 
     def build(self, x):

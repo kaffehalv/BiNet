@@ -13,8 +13,8 @@ from binet import BiNet
 
 on_linux = False
 gpus = 2
-batch_size = 64
-epochs_half_period = 200
+batch_size = max(128 * gpus, 32)
+epochs_half_period = 20
 epochs_end = max(epochs_half_period // 2, 2)
 epochs = 2 * epochs_half_period + epochs_end
 verbose = 2
@@ -22,8 +22,8 @@ verbose = 2
 weight_type = "binary"
 activation = "binary"
 shrink = 1
-weight_reg_strength = 0.0
-activity_reg_strength = 0.0
+weight_reg_strength = 1.0
+activity_reg_strength = 1.0
 if "binary" in weight_type or "binary" in activation:
     dropout_rate = 0.0
 else:
@@ -31,7 +31,7 @@ else:
 
 load_weights = False
 
-lr_max = 2e0
+lr_max = 1e1
 lr_init = 1e-1 * lr_max
 lr_min = 1e-4 * lr_max
 momentum = 0.9
