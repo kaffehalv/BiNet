@@ -1,8 +1,9 @@
-from keras.layers import Conv2D, DepthwiseConv2D, BatchNormalization, Activation, Dropout
-from keras.layers import MaxPooling2D, Flatten
+from keras.layers import Conv2D, DepthwiseConv2D, BatchNormalization, Activation, SpatialDropout2D
+from keras.layers import MaxPooling2D, Flatten, Dropout
 from keras.layers import Dense, Softmax
 from keras import backend as K
-from binet_utils import BinaryConv2D, BinaryDense, BinaryDepthwiseConv2D, Binarization, BinaryRegularizer
+from binet_utils import BinaryConv2D, BinaryDense, BinaryDepthwiseConv2D
+from binet_utils import Binarization, BinaryActivityRegularization, BinaryRegularizer
 
 
 class BiNet():
@@ -10,8 +11,8 @@ class BiNet():
                  weight_type="binary",
                  activation="binary",
                  shrink=1,
-                 weight_reg_strength=1.0,
-                 activity_reg_strength=1.0,
+                 weight_reg_strength=0.0,
+                 activity_reg_strength=0.0,
                  dropout_rate=0.0,
                  input_shape=(32, 32, 3),
                  classes=10):
@@ -31,7 +32,7 @@ class BiNet():
             self.weight_regularizer = None
 
         if self.activity_reg_strength > 0.:
-            self.activity_regularizer = BinaryRegularizer(
+            self.activity_regularizer = BinaryActivityRegularization(
                 self.activity_reg_strength)
         else:
             self.activity_regularizer = None
@@ -39,8 +40,8 @@ class BiNet():
         # Bias unnecessary with batch norm.
         self.use_bias = False
 
-        # Batch norm scale unnecessary with binarization.
-        self.scale = False
+        # Batch norm scale.
+        self.scale = True
 
         ####### Network Architecture #######
         self.filters_1 = 128 // shrink
@@ -66,9 +67,9 @@ class BiNet():
     def _activation(self, x, name, is_dense=False):
         activation_name = name + "_" + self.activation
         if (self.activation == "binary"):
-            x = Binarization(
-                activity_regularizer=self.activity_regularizer,
-                name=activation_name)(x)
+            if self.activity_regularizer is not None:
+                x = self.activity_regularizer(x)
+            x = Binarization(name=activation_name)(x)
         else:
             x = Activation(self.activation, name=activation_name)(x)
         return x
@@ -116,6 +117,7 @@ class BiNet():
     def _module(self, x, filters, repeats):
         self.module_id += 1
         name = "m" + str(self.module_id)
+
         for n in range(repeats):
             block_name = name + "_b" + str(n)
             pool = n == (repeats - 1)
@@ -128,13 +130,14 @@ class BiNet():
         x = self._module(x, filters=self.filters_2, repeats=self.repeats_2)
         x = self._module(x, filters=self.filters_3, repeats=self.repeats_3)
 
+        if self.dropout_rate > 0.0:
+            x = SpatialDropout2D(rate=self.dropout_rate, name="dropout")(x)
+            #x = Dropout(rate=self.dropout_rate, name="dropout")(x)
+
         x = Flatten(name="flatten")(x)
 
-        if self.dropout_rate > 0.0:
-            x = Dropout(rate=self.dropout_rate, name="dropout")(x)
-
-        x = self._dense_block(x, self.dense_1, name="fc1")
-        x = self._dense_block(x, self.dense_2, name="fc2")
+        x = self._dense_block(x, units=self.dense_1, name="fc1")
+        x = self._dense_block(x, units=self.dense_2, name="fc2")
         x = self._dense_block(x, self.classes, name="output", activate=False)
         x = Softmax(name="softmax")(x)
         return x
