@@ -14,8 +14,8 @@ from math import log, exp
 
 on_linux = False
 gpus = 2
-batch_size = max(256 * gpus, 32)
-epochs_half_period = 40
+batch_size = max(128 * gpus, 32)
+epochs_half_period = 10
 epochs_end = max(epochs_half_period // 2, 2)
 epochs = 2 * epochs_half_period + epochs_end
 verbose = 2
@@ -23,19 +23,22 @@ verbose = 2
 weight_type = "binary"
 activation = "binary"
 shrink = 1
-weight_reg_strength = 0.0
+weight_reg_strength = 1e-3
 activity_reg_strength = 0.0
-if "binary" in weight_type or "binary" in activation:
-    dropout_rate = 0.0
-else:
-    dropout_rate = 0.5
+dropout_rate = 0.5
 
 load_weights = False
 
-lr_max = 10.0
-lr_init = 1e-1 * lr_max
-lr_min = 1e-4 * lr_max
-momentum = 0.9
+optimizer = "adam"
+if optimizer == "adam":
+    lr_init = 1e-3
+    # Halve the lr every 50 epochs.
+    lr_decay = 0.5**(1 / 50)
+elif optimizer == "sgd":
+    lr_max = 1e0
+    lr_init = 1e-1 * lr_max
+    lr_min = 1e-4 * lr_max
+    momentum = 0.9
 
 if on_linux:
     weights_path = "/home/niclasw/BiNet/weights.hdf5"
@@ -47,11 +50,15 @@ else:
     best_weights_path = "C:/Users/niclas/ML-Projects/BiNet/best_weights.hdf5"
 
 
+def adam_schedule(epoch, lr):
+    return lr * lr_decay
+
+
 def interpolate(val0, val1, t):
     return exp(log(val0) + (log(val1) - log(val0)) * t)
 
 
-def schedule(epoch, lr):
+def sgd_schedule(epoch, lr):
     # One-cycle learning rate schedule.
     t0 = epoch % epochs_half_period
     if epoch < epochs_half_period:
@@ -66,8 +73,13 @@ def schedule(epoch, lr):
     return new_lr
 
 
-optimizer = optimizers.SGD(lr=lr_init, momentum=momentum)
-lr_schedule = LearningRateScheduler(schedule, verbose=1)
+if optimizer == "adam":
+    optimizer = optimizers.Adam(lr=lr_init)
+    lr_schedule = LearningRateScheduler(adam_schedule, verbose=1)
+elif optimizer == "sgd":
+    optimizer = optimizers.SGD(lr=lr_init, momentum=momentum)
+    lr_schedule = LearningRateScheduler(sgd_schedule, verbose=1)
+
 if gpus > 1:
     checkpoint_weights_path = multi_weights_path
 else:

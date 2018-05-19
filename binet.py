@@ -131,8 +131,7 @@ class BiNet():
         x = self._module(x, filters=self.filters_3, repeats=self.repeats_3)
 
         if self.dropout_rate > 0.0:
-            x = SpatialDropout2D(rate=self.dropout_rate, name="dropout")(x)
-            #x = Dropout(rate=self.dropout_rate, name="dropout")(x)
+            x = Dropout(rate=self.dropout_rate, name="dropout")(x)
 
         x = Flatten(name="flatten")(x)
 
