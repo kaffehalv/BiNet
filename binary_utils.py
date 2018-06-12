@@ -12,11 +12,10 @@ from keras.engine.topology import Layer, InputSpec
 from keras.utils import conv_utils
 
 
-def _binarization(x, training=None, epsilon=1e-1):
+def _binarization(x, training=None, epsilon=1e0):
     # Trick by Sergey Ioffe apparently.
     forward_behavior = K.sign(K.sign(x) + 0.5)
     backward_behavior = K.clip(x, -1., 1.)
-    # backward_behavior = x / (K.abs(x) + epsilon)
     return backward_behavior + K.stop_gradient(
         forward_behavior - backward_behavior)
 
@@ -40,13 +39,17 @@ class Binarization(Layer):
 
 
 class BinaryRegularizer(regularizers.Regularizer):
-    def __init__(self, scale=0.):
+    def __init__(self, scale=0., use_range=True):
         self.scale = K.cast_to_floatx(scale)
+        self.use_range = use_range
 
     def __call__(self, x):
         if self.scale:
-            regularization = K.sum(
-                self.scale * K.square(K.relu(K.abs(x) - 1.)))
+            if self.use_range:
+                regularization = K.sum(
+                    self.scale * K.square(K.relu(K.abs(x) - 1.)))
+            else:
+                regularization = K.sum(self.scale * K.square(K.abs(x) - 1.))
         else:
             regularization = 0.
         return regularization
@@ -56,11 +59,13 @@ class BinaryRegularizer(regularizers.Regularizer):
 
 
 class BinaryActivityRegularization(Layer):
-    def __init__(self, scale=0., **kwargs):
+    def __init__(self, scale=0., use_range=True, **kwargs):
         super(BinaryActivityRegularization, self).__init__(**kwargs)
         self.supports_masking = True
         self.scale = scale
-        self.activity_regularizer = BinaryRegularizer(scale=self.scale)
+        self.use_range = use_range
+        self.activity_regularizer = BinaryRegularizer(
+            scale=self.scale, use_range=self.use_range)
 
     def get_config(self):
         config = {"scale": self.scale}
@@ -80,7 +85,7 @@ class BinaryConv2D(Layer):
                  data_format=None,
                  dilation_rate=1,
                  activation=None,
-                 scale_output=False,
+                 scale_kernel=False,
                  kernel_initializer="glorot_uniform",
                  kernel_regularizer=None,
                  activity_regularizer=None,
@@ -102,7 +107,7 @@ class BinaryConv2D(Layer):
         self.kernel_regularizer = regularizers.get(kernel_regularizer)
         self.activity_regularizer = regularizers.get(activity_regularizer)
         self.kernel_constraint = constraints.get(kernel_constraint)
-        self.scale_output = scale_output
+        self.scale_kernel = scale_kernel
         self.input_spec = InputSpec(ndim=self.rank + 2)
 
     def build(self, input_shape):
@@ -132,6 +137,10 @@ class BinaryConv2D(Layer):
         # Binarize the kernel.
         binary_kernel = _binarization(self.kernel, training=training)
 
+        if self.scale_kernel:
+            binary_kernel = binary_kernel * K.mean(
+                K.abs(self.kernel), axis=[0, 1, 2], keepdims=True)
+
         outputs = K.conv2d(
             inputs,
             binary_kernel,
@@ -139,8 +148,6 @@ class BinaryConv2D(Layer):
             padding=self.padding,
             data_format=self.data_format,
             dilation_rate=self.dilation_rate)
-        if self.scale_output:
-            outputs = outputs * K.mean(K.abs(self.kernel))
 
         if self.activation is not None:
             return self.activation(outputs)
@@ -210,7 +217,7 @@ class BinaryDepthwiseConv2D(Layer):
                  data_format=None,
                  dilation_rate=1,
                  activation=None,
-                 scale_output=False,
+                 scale_kernel=False,
                  depthwise_initializer="glorot_uniform",
                  depthwise_regularizer=None,
                  activity_regularizer=None,
@@ -229,7 +236,7 @@ class BinaryDepthwiseConv2D(Layer):
         self.activation = activations.get(activation)
         self.activity_regularizer = regularizers.get(activity_regularizer)
         self.input_spec = InputSpec(ndim=self.rank + 2)
-        self.scale_output = scale_output
+        self.scale_kernel = scale_kernel
         self.depth_multiplier = depth_multiplier
         self.depthwise_initializer = initializers.get(depthwise_initializer)
         self.depthwise_regularizer = regularizers.get(depthwise_regularizer)
@@ -267,6 +274,10 @@ class BinaryDepthwiseConv2D(Layer):
         # Binarize the kernel.
         binary_kernel = _binarization(self.depthwise_kernel, training=training)
 
+        if self.scale_kernel:
+            binary_kernel = binary_kernel * K.mean(
+                K.abs(self.depthwise_kernel), axis=[0, 1, 2], keepdims=True)
+
         outputs = K.depthwise_conv2d(
             inputs,
             binary_kernel,
@@ -274,8 +285,6 @@ class BinaryDepthwiseConv2D(Layer):
             padding=self.padding,
             dilation_rate=self.dilation_rate,
             data_format=self.data_format)
-        if self.scale_output:
-            outputs = outputs * K.mean(K.abs(self.kernel))
 
         if self.activation is not None:
             return self.activation(outputs)
@@ -334,7 +343,7 @@ class BinaryDense(Layer):
     def __init__(self,
                  units,
                  activation=None,
-                 scale_output=False,
+                 scale_kernel=False,
                  kernel_initializer="glorot_uniform",
                  kernel_regularizer=None,
                  activity_regularizer=None,
@@ -351,7 +360,7 @@ class BinaryDense(Layer):
         self.kernel_constraint = constraints.get(kernel_constraint)
         self.input_spec = InputSpec(min_ndim=2)
         self.supports_masking = True
-        self.scale_output = scale_output
+        self.scale_kernel = scale_kernel
 
     def build(self, input_shape):
         assert len(input_shape) >= 2
@@ -370,10 +379,9 @@ class BinaryDense(Layer):
     def call(self, inputs, training=None):
         # Binarize the kernel.
         binary_kernel = _binarization(self.kernel, training=training)
-
+        if self.scale_kernel:
+            binary_kernel = binary_kernel * K.mean(K.abs(self.kernel))
         output = K.dot(inputs, binary_kernel)
-        if self.scale_output:
-            output = output * K.mean(K.abs(self.kernel))
 
         if self.activation is not None:
             output = self.activation(output)

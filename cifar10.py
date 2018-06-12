@@ -5,53 +5,59 @@ from keras.models import Model
 from keras.layers import Input
 from keras.utils import multi_gpu_model
 from keras.preprocessing.image import ImageDataGenerator
-from keras.callbacks import LearningRateScheduler, ModelCheckpoint
+from keras.callbacks import LearningRateScheduler, ModelCheckpoint, ReduceLROnPlateau
 from keras.datasets import cifar10, cifar100
 from keras import optimizers
 from keras import callbacks
 from binet import BiNet
+from resnet import ResNet
+from densenet import DenseNet
 from math import log, exp
 
 on_linux = False
 gpus = 2
-batch_size = max(128 * gpus, 32)
-epochs_half_period = 10
-epochs_end = max(epochs_half_period // 2, 2)
-epochs = 2 * epochs_half_period + epochs_end
+batch_size = max(256 * gpus, 32)
 verbose = 2
+epochs = 100
 
-weight_type = "binary"
-activation = "binary"
-shrink = 1
-weight_reg_strength = 1e-3
+optimizer = "sgd"
+weight_type = "float"
+activation = "relu"
+trainable_weights = True
+shrink_factor = 1.0
+weight_reg_strength = 0.0
 activity_reg_strength = 0.0
-dropout_rate = 0.5
-
+dropout_rate = 0.0
 load_weights = False
 
-optimizer = "adam"
+# Data augmentation
+rotation_range = 0.
+width_shift_range = 0.
+height_shift_range = 0.
+horizontal_flip = True
+
 if optimizer == "adam":
     lr_init = 1e-3
-    # Halve the lr every 50 epochs.
-    lr_decay = 0.5**(1 / 50)
+    lr_min = 5e-7
+    lr_factor = 0.5
+    cooldown = 0
+    patience = 5
 elif optimizer == "sgd":
-    lr_max = 1e0
+    lr_max = 2
     lr_init = 1e-1 * lr_max
     lr_min = 1e-4 * lr_max
     momentum = 0.9
+    nesterov = True
+    epochs_half_period = (2 * epochs) // 5
+    epochs_end = epochs - 2 * epochs_half_period
 
 if on_linux:
-    weights_path = "/home/niclasw/BiNet/weights.hdf5"
-    multi_weights_path = "/home/niclasw/BiNet/multi_weights.hdf5"
-    best_weights_path = "/home/niclasw/BiNet/best_weights.hdf5"
+    path = "/home/niclasw/BiNet/"
 else:
-    weights_path = "C:/Users/niclas/ML-Projects/BiNet/weights.hdf5"
-    multi_weights_path = "C:/Users/niclas/ML-Projects/BiNet/multi_weights.hdf5"
-    best_weights_path = "C:/Users/niclas/ML-Projects/BiNet/best_weights.hdf5"
-
-
-def adam_schedule(epoch, lr):
-    return lr * lr_decay
+    path = "C:/Users/niclas/ML-Projects/BiNet/"
+weights_path = path + "weights.hdf5"
+multi_weights_path = path + "multi_weights.hdf5"
+best_weights_path = path + "best_weights.hdf5"
 
 
 def interpolate(val0, val1, t):
@@ -75,10 +81,16 @@ def sgd_schedule(epoch, lr):
 
 if optimizer == "adam":
     optimizer = optimizers.Adam(lr=lr_init)
-    lr_schedule = LearningRateScheduler(adam_schedule, verbose=1)
+    lr_callback = ReduceLROnPlateau(
+        factor=lr_factor,
+        cooldown=cooldown,
+        patience=patience,
+        min_lr=lr_min,
+        verbose=1)
 elif optimizer == "sgd":
-    optimizer = optimizers.SGD(lr=lr_init, momentum=momentum)
-    lr_schedule = LearningRateScheduler(sgd_schedule, verbose=1)
+    optimizer = optimizers.SGD(
+        lr=lr_init, momentum=momentum, nesterov=nesterov)
+    lr_callback = LearningRateScheduler(sgd_schedule, verbose=1)
 
 if gpus > 1:
     checkpoint_weights_path = multi_weights_path
@@ -90,11 +102,7 @@ checkpointer = ModelCheckpoint(
     verbose=1,
     save_best_only=True,
     save_weights_only=True)
-callbacks = [lr_schedule, checkpointer]
-
-# fix random seed for reproducibility
-seed = 42
-np.random.seed(seed)
+callbacks = [lr_callback, checkpointer]
 
 # load data
 (x_train, y_train), (x_test, y_test) = cifar10.load_data()
@@ -107,16 +115,17 @@ val_size = y_test.shape[0]
 num_classes = y_test.shape[1]
 validation_steps = val_size // batch_size
 
-
-def pre_process(x):
-    return 2. * (x / 255. - 0.5)
-
-
 train_datagen = ImageDataGenerator(
-    preprocessing_function=pre_process, horizontal_flip=True)
+    featurewise_center=True,
+    featurewise_std_normalization=True,
+    rotation_range=rotation_range,
+    width_shift_range=width_shift_range,
+    height_shift_range=height_shift_range,
+    horizontal_flip=horizontal_flip)
 train_datagen.fit(x_train)
 
-val_datagen = ImageDataGenerator(preprocessing_function=pre_process)
+val_datagen = ImageDataGenerator(
+    featurewise_center=True, featurewise_std_normalization=True)
 val_datagen.fit(x_test)
 
 if gpus == 1:
@@ -128,21 +137,21 @@ else:
 with tf.device(device):
     input_shape = (32, 32, 3)
     model_input = Input(shape=input_shape)
-    network = BiNet(
+    network = DenseNet(
         weight_type=weight_type,
         activation=activation,
-        shrink=shrink,
+        shrink_factor=shrink_factor,
         weight_reg_strength=weight_reg_strength,
         activity_reg_strength=activity_reg_strength,
         dropout_rate=dropout_rate,
+        trainable_weights=trainable_weights,
         input_shape=input_shape,
         classes=num_classes)
     model_output = network.build(model_input)
     model = Model(inputs=model_input, outputs=model_output)
     model.summary()
     if load_weights:
-        model.load_weights(weights_path)
-        #model.load_weights(best_weights_path)
+        model.load_weights(best_weights_path)
 
 batches_per_epoch = len(x_train) // batch_size
 
