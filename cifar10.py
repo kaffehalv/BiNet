@@ -18,17 +18,17 @@ on_linux = False
 gpus = 2
 batch_size = max(256 * gpus, 32)
 verbose = 2
-epochs = 100
+epochs = 50
 
 optimizer = "sgd"
-weight_type = "float"
-activation = "relu"
-trainable_weights = True
+weight_type = "binary"
+activation = "silu"
+trainable_weights = False
 shrink_factor = 1.0
-weight_reg_strength = 0.0
+weight_reg_strength = 1e-3
 activity_reg_strength = 0.0
 dropout_rate = 0.0
-load_weights = False
+load_weights = True
 
 # Data augmentation
 rotation_range = 0.
@@ -39,17 +39,17 @@ horizontal_flip = True
 if optimizer == "adam":
     lr_init = 1e-3
     lr_min = 5e-7
-    lr_factor = 0.5
-    cooldown = 0
-    patience = 5
 elif optimizer == "sgd":
-    lr_max = 2
+    lr_max = 1
     lr_init = 1e-1 * lr_max
     lr_min = 1e-4 * lr_max
     momentum = 0.9
     nesterov = True
     epochs_half_period = (2 * epochs) // 5
     epochs_end = epochs - 2 * epochs_half_period
+lr_factor = 0.5
+cooldown = 0
+patience = 5
 
 if on_linux:
     path = "/home/niclasw/BiNet/"

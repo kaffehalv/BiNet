@@ -1,7 +1,7 @@
 from keras.layers import Conv2D, DepthwiseConv2D, BatchNormalization, Activation
 from keras.layers import Flatten, Dropout, AveragePooling2D, GlobalAveragePooling2D
 from keras.layers import Dense, Softmax, Lambda, SeparableConv2D
-from keras.layers import Add, Concatenate
+from keras.layers import Add, Concatenate, PReLU, GaussianDropout, GaussianNoise
 from keras import backend as K
 from keras.initializers import RandomUniform, TruncatedNormal
 from binary_utils import BinaryConv2D, BinaryDense, BinaryDepthwiseConv2D
@@ -60,14 +60,16 @@ class DenseNet():
         # See the XNOR-Net paper.
         self.scale_kernel = False
 
+        self.noise_stddev = 0.01
+
         ####### Network Architecture #######
         self.filters_0 = int(shrink_factor * 16)
 
-        self.filters_1 = int(shrink_factor * 4)
-        self.repeats_1 = 4
+        self.filters_1 = int(shrink_factor * 16)
+        self.repeats_1 = 3
         self.downsample_1 = False
 
-        self.filters_2 = int(shrink_factor * 8)
+        self.filters_2 = int(shrink_factor * 16)
         self.repeats_2 = 4
         self.downsample_2 = True
 
@@ -75,7 +77,7 @@ class DenseNet():
         self.repeats_3 = 4
         self.downsample_3 = True
 
-        self.filters_4 = int(shrink_factor * 32)
+        self.filters_4 = int(shrink_factor * 16)
         self.repeats_4 = 4
         self.downsample_4 = True
 
@@ -93,6 +95,8 @@ class DenseNet():
             x = Lambda(lambda x: K.clip(x, -1., 1.), name=activation_name)(x)
         elif (activation == "silu"):
             x = Lambda(lambda x: x * K.sigmoid(x), name=activation_name)(x)
+        elif (activation == "prelu"):
+            x = PReLU(shared_axes=[1,2,3], name=activation_name)(x)
         else:
             x = Activation(activation, name=activation_name)(x)
             if self.activity_regularizer is not None:
@@ -142,20 +146,22 @@ class DenseNet():
             x = self._batch_norm(x, name=name)
             x = self._activation(x, activation=activation, name=name)
 
-        if (self.weight_type == "float"):
+        if self.weight_type == "float":
             if separable:
                 x = SeparableConv2D(
-                    filters,
+                    filters=filters,
                     kernel_size=kernel_size,
                     strides=stride,
                     use_bias=self.use_bias,
                     depthwise_initializer=self.weight_initializer,
                     depthwise_regularizer=self.weight_regularizer,
+                    pointwise_initializer=self.weight_initializer,
+                    pointwise_regularizer=self.weight_regularizer,
                     padding=self.padding,
                     name=name + "_conv")(x)
             else:
                 x = Conv2D(
-                    filters,
+                    filters=filters,
                     kernel_size=kernel_size,
                     strides=stride,
                     use_bias=self.use_bias,
@@ -165,7 +171,7 @@ class DenseNet():
                     name=name + "_conv")(x)
         elif self.weight_type == "binary":
             x = BinaryConv2D(
-                filters,
+                filters=filters,
                 kernel_size=kernel_size,
                 strides=stride,
                 scale_kernel=self.scale_kernel,
@@ -174,6 +180,9 @@ class DenseNet():
                 padding=self.padding,
                 trainable=self.trainable_weights,
                 name=name + "_conv")(x)
+
+        if self.noise_stddev > 0.0:
+            x = GaussianNoise(stddev=self.noise_stddev, name=name+"_noise")(x)
 
         if self.dropout_rate > 0.0 and not first_layer:
             x = Dropout(rate=self.dropout_rate, name=name+"_dropout")(x)
@@ -205,7 +214,7 @@ class DenseNet():
             kernel_size=kernel_size,
             dropout_rate=dropout_rate,
             activation=activation,
-            separable=True,
+            separable=False,
             name=name)
 
         x = Concatenate(name=name + "_concat")([x_pool, x_conv])
@@ -268,5 +277,7 @@ class DenseNet():
             name="last")
 
         x = GlobalAveragePooling2D(name="global_avg_pool")(x)
-        x = Softmax(name="softmax")(x)
+
+        x = self._batch_norm(x, name="output")
+        x = self._activation(x, activation="softmax", name="output")
         return x
