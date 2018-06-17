@@ -1,15 +1,18 @@
-from keras.layers import Conv2D, BatchNormalization, Activation
-from keras.layers import Flatten, Dropout, MaxPooling2D, Dense
+from keras.layers import Conv2D, SeparableConv2D, Dense, MaxPooling2D
+from keras.layers import BatchNormalization, Flatten, Dropout
+from keras.layers import PReLU, Activation, Lambda
 from keras import backend as K
-from keras.initializers import RandomUniform, TruncatedNormal
-from binary_utils import BinaryConv2D, BinaryDense, Binarization
-from binary_utils import BinaryActivityRegularization, BinaryRegularizer
+from quantization_utils import QuantizedConv2D, QuantizedDense, QuantizedDepthwiseConv2D
+from quantization_utils import Quantization, QuantizedActivityRegularization, QuantizationRegularizer
 
 
 class BiNet():
     def __init__(self,
-                 weight_type="binary",
-                 activation="binary",
+                 weight_type="quant",
+                 activation="quant",
+                 weight_bits=1,
+                 activation_bits=1,
+                 separable=False,
                  shrink_factor=1.0,
                  weight_reg_strength=0.0,
                  activity_reg_strength=0.0,
@@ -19,6 +22,9 @@ class BiNet():
                  classes=10):
         self.weight_type = weight_type
         self.activation = activation
+        self.weight_bits = weight_bits
+        self.activation_bits = activation_bits
+        self.separable = separable
         self.weight_reg_strength = weight_reg_strength
         self.activity_reg_strength = activity_reg_strength
         self.dropout_rate = dropout_rate
@@ -26,27 +32,20 @@ class BiNet():
         self.input_shape = input_shape
         self.classes = classes
 
-        use_range = True
-
         # Set up the regularizers.
-        if self.weight_reg_strength > 0.:
-            self.weight_regularizer = BinaryRegularizer(
-                scale=self.weight_reg_strength, use_range=use_range)
+        if self.weight_reg_strength > 0.0:
+            self.weight_regularizer = QuantizationRegularizer(
+                scale=self.weight_reg_strength)
         else:
             self.weight_regularizer = None
 
-        if self.activity_reg_strength > 0.:
-            self.activity_regularizer = BinaryActivityRegularization(
-                scale=self.activity_reg_strength, use_range=use_range)
+        if self.activity_reg_strength > 0.0:
+            self.activity_regularizer = QuantizedActivityRegularization(
+                scale=self.activity_reg_strength)
         else:
             self.activity_regularizer = None
 
-        if self.weight_type == "float":
-            self.weight_initializer = "glorot_uniform"
-        else:
-            init_lim = 0.5
-            self.weight_initializer = TruncatedNormal(
-                mean=0., stddev=0.5 * init_lim)
+        self.weight_initializer = "glorot_uniform"
 
         # Bias unnecessary with batch norm.
         self.use_bias = False
@@ -81,12 +80,15 @@ class BiNet():
 
     def _activation(self, x, activation, name, is_dense=False):
         activation_name = name + "_" + activation
-        if (activation == "binary"):
-            x = Binarization(name=activation_name)(x)
+        if (activation == "quant"):
+            x = Quantization(
+                name=activation_name, num_bits=self.activation_bits)(x)
         elif (activation == "clip"):
             x = Lambda(lambda x: K.clip(x, -1., 1.), name=activation_name)(x)
         elif (activation == "silu"):
             x = Lambda(lambda x: x * K.sigmoid(x), name=activation_name)(x)
+        elif (activation == "prelu"):
+            x = PReLU(shared_axes=[1, 2, 3], name=activation_name)(x)
         else:
             x = Activation(activation, name=activation_name)(x)
             if self.activity_regularizer is not None:
@@ -107,12 +109,13 @@ class BiNet():
                 kernel_initializer=self.weight_initializer,
                 kernel_regularizer=self.weight_regularizer,
                 name=name + "_dense")(x)
-        elif self.weight_type == "binary":
-            x = BinaryDense(
+        elif (self.weight_type == "quant"):
+            x = QuantizedDense(
                 units,
                 scale_kernel=self.scale_kernel,
                 kernel_initializer=self.weight_initializer,
                 trainable=self.trainable_weights,
+                num_bits=self.weight_bits,
                 name=name + "_dense")(x)
 
         x = self._batch_norm(x, name=name)
@@ -125,26 +128,63 @@ class BiNet():
                    filters,
                    activation,
                    kernel_size=3,
-                   downsample=False):
-        if (self.weight_type == "float"):
-            x = Conv2D(
-                filters,
-                kernel_size=kernel_size,
-                use_bias=self.use_bias,
-                kernel_initializer=self.weight_initializer,
-                kernel_regularizer=self.weight_regularizer,
-                padding=self.padding,
-                name=name + "_conv")(x)
-        elif self.weight_type == "binary":
-            x = BinaryConv2D(
-                filters,
-                kernel_size=kernel_size,
-                scale_kernel=self.scale_kernel,
-                kernel_initializer=self.weight_initializer,
-                kernel_regularizer=self.weight_regularizer,
-                padding=self.padding,
-                trainable=self.trainable_weights,
-                name=name + "_conv")(x)
+                   downsample=False,
+                   separable=False):
+        if self.weight_type == "float":
+            if separable:
+                x = SeparableConv2D(
+                    filters=filters,
+                    kernel_size=kernel_size,
+                    use_bias=self.use_bias,
+                    depthwise_initializer=self.weight_initializer,
+                    depthwise_regularizer=self.weight_regularizer,
+                    pointwise_initializer=self.weight_initializer,
+                    pointwise_regularizer=self.weight_regularizer,
+                    padding=self.padding,
+                    name=name + "_conv")(x)
+            else:
+                x = Conv2D(
+                    filters=filters,
+                    kernel_size=kernel_size,
+                    use_bias=self.use_bias,
+                    kernel_initializer=self.weight_initializer,
+                    kernel_regularizer=self.weight_regularizer,
+                    padding=self.padding,
+                    name=name + "_conv")(x)
+        elif (self.weight_type == "quant"):
+            if separable:
+                x = QuantizedDepthwiseConv2D(
+                    kernel_size=kernel_size,
+                    depthwise_initializer=self.weight_initializer,
+                    depthwise_regularizer=self.weight_regularizer,
+                    padding=self.padding,
+                    trainable=self.trainable_weights,
+                    num_bits=self.weight_bits,
+                    name=name + "_dw")(x)
+                x = self._batch_norm(x, name=name + "_mid")
+                x = self._activation(
+                    x, activation=activation, name=name + "_mid")
+                x = QuantizedConv2D(
+                    filters=filters,
+                    kernel_size=1,
+                    scale_kernel=self.scale_kernel,
+                    kernel_initializer=self.weight_initializer,
+                    kernel_regularizer=self.weight_regularizer,
+                    padding=self.padding,
+                    trainable=self.trainable_weights,
+                    num_bits=self.weight_bits,
+                    name=name + "_pw")(x)
+            else:
+                x = QuantizedConv2D(
+                    filters=filters,
+                    kernel_size=kernel_size,
+                    scale_kernel=self.scale_kernel,
+                    kernel_initializer=self.weight_initializer,
+                    kernel_regularizer=self.weight_regularizer,
+                    padding=self.padding,
+                    trainable=self.trainable_weights,
+                    num_bits=self.weight_bits,
+                    name=name + "_conv")(x)
 
         if downsample:
             x = MaxPooling2D(
@@ -168,6 +208,7 @@ class BiNet():
                 filters=filters,
                 downsample=downsample,
                 activation=activation,
+                separable=self.separable,
                 name=block_name)
 
         self.module_id += 1

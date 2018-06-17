@@ -21,24 +21,30 @@ verbose = 2
 epochs = 50
 
 optimizer = "sgd"
-weight_type = "binary"
-activation = "silu"
-trainable_weights = False
+weight_type = "float"
+activation = "clip"
+weight_bits = 8
+activation_bits = 8
+separable = False
+trainable_weights = True
 shrink_factor = 1.0
 weight_reg_strength = 1e-3
 activity_reg_strength = 0.0
-dropout_rate = 0.0
-load_weights = True
+dropout_rate = 0.1
+load_weights = False
 
 # Data augmentation
-rotation_range = 0.
-width_shift_range = 0.
-height_shift_range = 0.
+rotation_range = 0
+width_shift_range = 0.0
+height_shift_range = 0.0
 horizontal_flip = True
 
 if optimizer == "adam":
     lr_init = 1e-3
     lr_min = 5e-7
+    lr_factor = 0.1
+    cooldown = 0
+    patience = 10
 elif optimizer == "sgd":
     lr_max = 1
     lr_init = 1e-1 * lr_max
@@ -47,9 +53,6 @@ elif optimizer == "sgd":
     nesterov = True
     epochs_half_period = (2 * epochs) // 5
     epochs_end = epochs - 2 * epochs_half_period
-lr_factor = 0.5
-cooldown = 0
-patience = 5
 
 if on_linux:
     path = "/home/niclasw/BiNet/"
@@ -79,19 +82,6 @@ def sgd_schedule(epoch, lr):
     return new_lr
 
 
-if optimizer == "adam":
-    optimizer = optimizers.Adam(lr=lr_init)
-    lr_callback = ReduceLROnPlateau(
-        factor=lr_factor,
-        cooldown=cooldown,
-        patience=patience,
-        min_lr=lr_min,
-        verbose=1)
-elif optimizer == "sgd":
-    optimizer = optimizers.SGD(
-        lr=lr_init, momentum=momentum, nesterov=nesterov)
-    lr_callback = LearningRateScheduler(sgd_schedule, verbose=1)
-
 if gpus > 1:
     checkpoint_weights_path = multi_weights_path
 else:
@@ -102,7 +92,22 @@ checkpointer = ModelCheckpoint(
     verbose=1,
     save_best_only=True,
     save_weights_only=True)
-callbacks = [lr_callback, checkpointer]
+
+if optimizer == "adam":
+    optimizer = optimizers.Adam(lr=lr_init)
+    lr_reduce = ReduceLROnPlateau(
+        monitor="val_acc",
+        factor=lr_factor,
+        cooldown=cooldown,
+        patience=patience,
+        min_lr=lr_min,
+        verbose=1)
+    callbacks = [lr_reduce, checkpointer]
+elif optimizer == "sgd":
+    optimizer = optimizers.SGD(
+        lr=lr_init, momentum=momentum, nesterov=nesterov)
+    lr_schedule = LearningRateScheduler(sgd_schedule, verbose=1)
+    callbacks = [lr_schedule, checkpointer]
 
 # load data
 (x_train, y_train), (x_test, y_test) = cifar10.load_data()
@@ -137,9 +142,12 @@ else:
 with tf.device(device):
     input_shape = (32, 32, 3)
     model_input = Input(shape=input_shape)
-    network = DenseNet(
+    network = ResNet(
         weight_type=weight_type,
         activation=activation,
+        weight_bits=weight_bits,
+        activation_bits=activation_bits,
+        separable=separable,
         shrink_factor=shrink_factor,
         weight_reg_strength=weight_reg_strength,
         activity_reg_strength=activity_reg_strength,
