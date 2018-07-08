@@ -86,34 +86,40 @@ class QuantizedConv2D(Layer):
                  filters,
                  kernel_size,
                  strides=1,
-                 padding="valid",
+                 padding='valid',
                  data_format=None,
                  dilation_rate=1,
                  activation=None,
-                 scale_kernel=False,
-                 num_bits=8,
-                 kernel_initializer="glorot_uniform",
+                 use_bias=True,
+                 kernel_initializer='glorot_uniform',
+                 bias_initializer='zeros',
                  kernel_regularizer=None,
+                 bias_regularizer=None,
                  activity_regularizer=None,
                  kernel_constraint=None,
+                 bias_constraint=None,
+                 num_bits=8,
                  **kwargs):
         super(QuantizedConv2D, self).__init__(**kwargs)
         self.rank = 2
         self.filters = filters
         self.kernel_size = conv_utils.normalize_tuple(kernel_size, self.rank,
-                                                      "kernel_size")
+                                                      'kernel_size')
         self.strides = conv_utils.normalize_tuple(strides, self.rank,
-                                                  "strides")
+                                                  'strides')
         self.padding = conv_utils.normalize_padding(padding)
         self.data_format = conv_utils.normalize_data_format(data_format)
         self.dilation_rate = conv_utils.normalize_tuple(
-            dilation_rate, self.rank, "dilation_rate")
+            dilation_rate, self.rank, 'dilation_rate')
         self.activation = activations.get(activation)
+        self.use_bias = use_bias
         self.kernel_initializer = initializers.get(kernel_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
         self.kernel_regularizer = regularizers.get(kernel_regularizer)
+        self.bias_regularizer = regularizers.get(bias_regularizer)
         self.activity_regularizer = regularizers.get(activity_regularizer)
         self.kernel_constraint = constraints.get(kernel_constraint)
-        self.scale_kernel = scale_kernel
+        self.bias_constraint = constraints.get(bias_constraint)
         self.num_bits = num_bits
         self.quantization = _Quantization(num_bits=self.num_bits)
         self.input_spec = InputSpec(ndim=self.rank + 2)
@@ -136,6 +142,16 @@ class QuantizedConv2D(Layer):
             regularizer=self.kernel_regularizer,
             constraint=self.kernel_constraint)
 
+        if self.use_bias:
+            self.bias = self.add_weight(
+                shape=(self.filters, ),
+                initializer=self.bias_initializer,
+                name='bias',
+                regularizer=self.bias_regularizer,
+                constraint=self.bias_constraint)
+        else:
+            self.bias = None
+
         # Set input spec.
         self.input_spec = InputSpec(
             ndim=self.rank + 2, axes={channel_axis: input_dim})
@@ -145,10 +161,6 @@ class QuantizedConv2D(Layer):
         # Quantize the kernel.
         quantized_kernel = self.quantization(self.kernel)
 
-        if self.scale_kernel:
-            quantized_kernel = quantized_kernel * K.mean(
-                K.abs(self.kernel), axis=[0, 1, 2], keepdims=True)
-
         outputs = K.conv2d(
             inputs,
             quantized_kernel,
@@ -156,6 +168,10 @@ class QuantizedConv2D(Layer):
             padding=self.padding,
             data_format=self.data_format,
             dilation_rate=self.dilation_rate)
+
+        if self.use_bias:
+            outputs = K.bias_add(
+                outputs, self.bias, data_format=self.data_format)
 
         if self.activation is not None:
             return self.activation(outputs)
@@ -189,69 +205,79 @@ class QuantizedConv2D(Layer):
 
     def get_config(self):
         config = {
-            "filters":
+            'filters':
             self.filters,
-            "kernel_size":
+            'kernel_size':
             self.kernel_size,
-            "strides":
+            'strides':
             self.strides,
-            "padding":
+            'padding':
             self.padding,
-            "data_format":
+            'data_format':
             self.data_format,
-            "dilation_rate":
+            'dilation_rate':
             self.dilation_rate,
-            "activation":
+            'activation':
             activations.serialize(self.activation),
-            "kernel_initializer":
+            'use_bias':
+            self.use_bias,
+            'kernel_initializer':
             initializers.serialize(self.kernel_initializer),
-            "kernel_regularizer":
+            'bias_initializer':
+            initializers.serialize(self.bias_initializer),
+            'kernel_regularizer':
             regularizers.serialize(self.kernel_regularizer),
-            "activity_regularizer":
+            'bias_regularizer':
+            regularizers.serialize(self.bias_regularizer),
+            'activity_regularizer':
             regularizers.serialize(self.activity_regularizer),
-            "kernel_constraint":
-            constraints.serialize(self.kernel_constraint)
+            'kernel_constraint':
+            constraints.serialize(self.kernel_constraint),
+            'bias_constraint':
+            constraints.serialize(self.bias_constraint),
+            'num_bits':
+            self.num_bits
         }
         base_config = super(QuantizedConv2D, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 
-class QuantizedDepthwiseConv2D(Layer):
+class QuantizedDepthwiseConv2D(QuantizedConv2D):
     def __init__(self,
                  kernel_size,
                  strides=(1, 1),
-                 padding="valid",
+                 padding='valid',
                  depth_multiplier=1,
                  data_format=None,
-                 dilation_rate=1,
                  activation=None,
-                 scale_kernel=False,
-                 num_bits=8,
-                 depthwise_initializer="glorot_uniform",
+                 use_bias=True,
+                 depthwise_initializer='glorot_uniform',
+                 bias_initializer='zeros',
                  depthwise_regularizer=None,
+                 bias_regularizer=None,
                  activity_regularizer=None,
                  depthwise_constraint=None,
+                 bias_constraint=None,
+                 num_bits=8,
                  **kwargs):
-        super(QuantizedDepthwiseConv2D, self).__init__(**kwargs)
-        self.rank = 2
-        self.kernel_size = conv_utils.normalize_tuple(kernel_size, self.rank,
-                                                      "kernel_size")
-        self.strides = conv_utils.normalize_tuple(strides, self.rank,
-                                                  "strides")
-        self.padding = conv_utils.normalize_padding(padding)
-        self.data_format = conv_utils.normalize_data_format(data_format)
-        self.dilation_rate = conv_utils.normalize_tuple(
-            dilation_rate, self.rank, "dilation_rate")
-        self.activation = activations.get(activation)
-        self.activity_regularizer = regularizers.get(activity_regularizer)
-        self.input_spec = InputSpec(ndim=self.rank + 2)
-        self.scale_kernel = scale_kernel
-        self.num_bits = num_bits
-        self.quantization = _Quantization(num_bits=self.num_bits)
+        super(QuantizedDepthwiseConv2D, self).__init__(
+            filters=None,
+            kernel_size=kernel_size,
+            strides=strides,
+            padding=padding,
+            data_format=data_format,
+            activation=activation,
+            use_bias=use_bias,
+            bias_regularizer=bias_regularizer,
+            activity_regularizer=activity_regularizer,
+            bias_constraint=bias_constraint,
+            num_bits=num_bits,
+            **kwargs)
         self.depth_multiplier = depth_multiplier
         self.depthwise_initializer = initializers.get(depthwise_initializer)
         self.depthwise_regularizer = regularizers.get(depthwise_regularizer)
         self.depthwise_constraint = constraints.get(depthwise_constraint)
+        self.bias_initializer = initializers.get(bias_initializer)
 
     def build(self, input_shape):
         if len(input_shape) < 4:
@@ -277,6 +303,16 @@ class QuantizedDepthwiseConv2D(Layer):
             regularizer=self.depthwise_regularizer,
             constraint=self.depthwise_constraint)
 
+        if self.use_bias:
+            self.bias = self.add_weight(
+                shape=(input_dim * self.depth_multiplier, ),
+                initializer=self.bias_initializer,
+                name='bias',
+                regularizer=self.bias_regularizer,
+                constraint=self.bias_constraint)
+        else:
+            self.bias = None
+
         # Set input spec.
         self.input_spec = InputSpec(ndim=4, axes={channel_axis: input_dim})
         self.built = True
@@ -285,10 +321,6 @@ class QuantizedDepthwiseConv2D(Layer):
         # Quantize the kernel.
         quantized_kernel = self.quantization(self.depthwise_kernel)
 
-        if self.scale_kernel:
-            quantized_kernel = quantized_kernel * K.mean(
-                K.abs(self.depthwise_kernel), axis=[0, 1, 2], keepdims=True)
-
         outputs = K.depthwise_conv2d(
             inputs,
             quantized_kernel,
@@ -296,6 +328,10 @@ class QuantizedDepthwiseConv2D(Layer):
             padding=self.padding,
             dilation_rate=self.dilation_rate,
             data_format=self.data_format)
+
+        if self.use_bias:
+            outputs = K.bias_add(
+                outputs, self.bias, data_format=self.data_format)
 
         if self.activation is not None:
             return self.activation(outputs)
@@ -322,57 +358,50 @@ class QuantizedDepthwiseConv2D(Layer):
             return (input_shape[0], rows, cols, out_filters)
 
     def get_config(self):
-        config = {
-            "filters":
-            self.filters,
-            "kernel_size":
-            self.kernel_size,
-            "strides":
-            self.strides,
-            "padding":
-            self.padding,
-            "data_format":
-            self.data_format,
-            "dilation_rate":
-            self.dilation_rate,
-            "activation":
-            activations.serialize(self.activation),
-            "depthwise_initializer":
-            initializers.serialize(self.depthwise_initializer),
-            "depthwise_regularizer":
-            regularizers.serialize(self.depthwise_regularizer),
-            "activity_regularizer":
-            regularizers.serialize(self.activity_regularizer),
-            "depthwise_constraint":
-            constraints.serialize(self.depthwise_constraint)
-        }
-        base_config = super(QuantizedDepthwiseConv2D, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
+        config = super(QuantizedDepthwiseConv2D, self).get_config()
+        config.pop('filters')
+        config.pop('kernel_initializer')
+        config.pop('kernel_regularizer')
+        config.pop('kernel_constraint')
+        config['depth_multiplier'] = self.depth_multiplier
+        config['depthwise_initializer'] = initializers.serialize(
+            self.depthwise_initializer)
+        config['depthwise_regularizer'] = regularizers.serialize(
+            self.depthwise_regularizer)
+        config['depthwise_constraint'] = constraints.serialize(
+            self.depthwise_constraint)
+        return config
 
 
 class QuantizedDense(Layer):
     def __init__(self,
                  units,
                  activation=None,
-                 scale_kernel=False,
-                 num_bits=8,
-                 kernel_initializer="glorot_uniform",
+                 use_bias=True,
+                 kernel_initializer='glorot_uniform',
+                 bias_initializer='zeros',
                  kernel_regularizer=None,
+                 bias_regularizer=None,
                  activity_regularizer=None,
                  kernel_constraint=None,
+                 bias_constraint=None,
+                 num_bits=8,
                  **kwargs):
         if "input_shape" not in kwargs and "input_dim" in kwargs:
             kwargs["input_shape"] = (kwargs.pop("input_dim"), )
         super(QuantizedDense, self).__init__(**kwargs)
         self.units = units
         self.activation = activations.get(activation)
+        self.use_bias = use_bias
         self.kernel_initializer = initializers.get(kernel_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
         self.kernel_regularizer = regularizers.get(kernel_regularizer)
+        self.bias_regularizer = regularizers.get(bias_regularizer)
         self.activity_regularizer = regularizers.get(activity_regularizer)
         self.kernel_constraint = constraints.get(kernel_constraint)
+        self.bias_constraint = constraints.get(bias_constraint)
         self.input_spec = InputSpec(min_ndim=2)
         self.supports_masking = True
-        self.scale_kernel = scale_kernel
         self.num_bits = num_bits
         self.quantization = _Quantization(num_bits=self.num_bits)
 
@@ -387,17 +416,25 @@ class QuantizedDense(Layer):
             regularizer=self.kernel_regularizer,
             constraint=self.kernel_constraint)
 
+        if self.use_bias:
+            self.bias = self.add_weight(
+                shape=(self.units, ),
+                initializer=self.bias_initializer,
+                name='bias',
+                regularizer=self.bias_regularizer,
+                constraint=self.bias_constraint)
+        else:
+            self.bias = None
+
         self.input_spec = InputSpec(min_ndim=2, axes={-1: input_dim})
         self.built = True
 
     def call(self, inputs):
         # Quantize the kernel.
         quantized_kernel = self.quantization(self.kernel)
-
-        if self.scale_kernel:
-            quantized_kernel = quantized_kernel * K.mean(K.abs(self.kernel))
         output = K.dot(inputs, quantized_kernel)
-
+        if self.use_bias:
+            output = K.bias_add(output, self.bias, data_format='channels_last')
         if self.activation is not None:
             output = self.activation(output)
         return output
@@ -423,6 +460,8 @@ class QuantizedDense(Layer):
             regularizers.serialize(self.activity_regularizer),
             "kernel_constraint":
             constraints.serialize(self.kernel_constraint),
+            'num_bits':
+            num_bits
         }
         base_config = super(QuantizedDense, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))

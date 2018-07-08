@@ -112,7 +112,7 @@ class BiNet():
         elif (self.weight_type == "quant"):
             x = QuantizedDense(
                 units,
-                scale_kernel=self.scale_kernel,
+                use_bias=self.use_bias,
                 kernel_initializer=self.weight_initializer,
                 trainable=self.trainable_weights,
                 num_bits=self.weight_bits,
@@ -155,6 +155,7 @@ class BiNet():
             if separable:
                 x = QuantizedDepthwiseConv2D(
                     kernel_size=kernel_size,
+                    use_bias=self.use_bias,
                     depthwise_initializer=self.weight_initializer,
                     depthwise_regularizer=self.weight_regularizer,
                     padding=self.padding,
@@ -167,7 +168,7 @@ class BiNet():
                 x = QuantizedConv2D(
                     filters=filters,
                     kernel_size=1,
-                    scale_kernel=self.scale_kernel,
+                    use_bias=self.use_bias,
                     kernel_initializer=self.weight_initializer,
                     kernel_regularizer=self.weight_regularizer,
                     padding=self.padding,
@@ -178,7 +179,7 @@ class BiNet():
                 x = QuantizedConv2D(
                     filters=filters,
                     kernel_size=kernel_size,
-                    scale_kernel=self.scale_kernel,
+                    use_bias=self.use_bias,
                     kernel_initializer=self.weight_initializer,
                     kernel_regularizer=self.weight_regularizer,
                     padding=self.padding,

@@ -20,17 +20,17 @@ batch_size = max(256 * gpus, 32)
 verbose = 2
 epochs = 50
 
-optimizer = "sgd"
-weight_type = "float"
-activation = "clip"
-weight_bits = 8
+optimizer = "adam"
+weight_type = "quant"
+activation = "quant"
+weight_bits = 1
 activation_bits = 8
 separable = False
 trainable_weights = True
 shrink_factor = 1.0
 weight_reg_strength = 1e-3
 activity_reg_strength = 0.0
-dropout_rate = 0.1
+dropout_rate = 0.0
 load_weights = False
 
 # Data augmentation
@@ -120,17 +120,25 @@ val_size = y_test.shape[0]
 num_classes = y_test.shape[1]
 validation_steps = val_size // batch_size
 
+
+def preprocess(x):
+    return 2 / 255 * x - 1
+
+
 train_datagen = ImageDataGenerator(
-    featurewise_center=True,
-    featurewise_std_normalization=True,
+    featurewise_center=False,
+    featurewise_std_normalization=False,
     rotation_range=rotation_range,
     width_shift_range=width_shift_range,
     height_shift_range=height_shift_range,
-    horizontal_flip=horizontal_flip)
+    horizontal_flip=horizontal_flip,
+    preprocessing_function=preprocess)
 train_datagen.fit(x_train)
 
 val_datagen = ImageDataGenerator(
-    featurewise_center=True, featurewise_std_normalization=True)
+    featurewise_center=False,
+    featurewise_std_normalization=False,
+    preprocessing_function=preprocess)
 val_datagen.fit(x_test)
 
 if gpus == 1:

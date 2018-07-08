@@ -101,27 +101,24 @@ class ResNet():
     def _batch_norm(self, x, name):
         return BatchNormalization(scale=self.scale, name=name + "_bn")(x)
 
-    def _dense_block(self, x, units, activation, name, float_override=False):
+    def _dense_block(self, x, units, activation, name):
         x = self._batch_norm(x, name=name)
-        if float_override:
-            x = self._activation(x, activation="relu", name=name)
-        else:
-            x = self._activation(x, activation=activation, name=name)
+        x = self._activation(x, activation=activation, name=name)
 
         if len(x.shape) > 2:
             x = Flatten(name="flatten")(x)
 
-        if (self.weight_type == "float") or float_override:
+        if (self.weight_type == "float"):
             x = Dense(
                 units,
-                use_bias=self.use_bias,
+                use_bias=True,
                 kernel_initializer=self.weight_initializer,
                 kernel_regularizer=self.weight_regularizer,
                 name=name + "_dense")(x)
         elif (self.weight_type == "quant"):
             x = QuantizedDense(
                 units,
-                scale_kernel=self.scale_kernel,
+                use_bias=True,
                 kernel_initializer=self.weight_initializer,
                 trainable=self.trainable_weights,
                 num_bits=self.weight_bits,
@@ -135,12 +132,15 @@ class ResNet():
                    activation,
                    kernel_size=3,
                    stride=1,
+                   padding="same",
                    first_layer=False,
                    dropout_rate=0.0,
                    separable=False):
         if not first_layer:
             x = self._batch_norm(x, name=name)
             x = self._activation(x, activation=activation, name=name)
+
+        sk = str(kernel_size) + "x" + str(kernel_size)
 
         if self.weight_type == "float":
             if separable:
@@ -153,8 +153,8 @@ class ResNet():
                     depthwise_regularizer=self.weight_regularizer,
                     pointwise_initializer=self.weight_initializer,
                     pointwise_regularizer=self.weight_regularizer,
-                    padding=self.padding,
-                    name=name + "_conv")(x)
+                    padding=padding,
+                    name=name + "_conv" + sk)(x)
             else:
                 x = Conv2D(
                     filters=filters,
@@ -163,19 +163,20 @@ class ResNet():
                     use_bias=self.use_bias,
                     kernel_initializer=self.weight_initializer,
                     kernel_regularizer=self.weight_regularizer,
-                    padding=self.padding,
-                    name=name + "_conv")(x)
+                    padding=padding,
+                    name=name + "_conv" + sk)(x)
         elif (self.weight_type == "quant"):
             if separable:
                 x = QuantizedDepthwiseConv2D(
                     kernel_size=kernel_size,
                     strides=stride,
+                    use_bias=self.use_bias,
                     depthwise_initializer=self.weight_initializer,
                     depthwise_regularizer=self.weight_regularizer,
-                    padding=self.padding,
+                    padding=padding,
                     trainable=self.trainable_weights,
                     num_bits=self.weight_bits,
-                    name=name + "_dw")(x)
+                    name=name + "_dw" + sk)(x)
                 x = self._batch_norm(x, name=name + "_mid")
                 x = self._activation(
                     x, activation=activation, name=name + "_mid")
@@ -183,25 +184,25 @@ class ResNet():
                     filters=filters,
                     kernel_size=1,
                     strides=1,
-                    scale_kernel=self.scale_kernel,
+                    use_bias=self.use_bias,
                     kernel_initializer=self.weight_initializer,
                     kernel_regularizer=self.weight_regularizer,
-                    padding=self.padding,
+                    padding=padding,
                     trainable=self.trainable_weights,
                     num_bits=self.weight_bits,
-                    name=name + "_pw")(x)
+                    name=name + "_pw1x1")(x)
             else:
                 x = QuantizedConv2D(
                     filters=filters,
                     kernel_size=kernel_size,
                     strides=stride,
-                    scale_kernel=self.scale_kernel,
+                    use_bias=self.use_bias,
                     kernel_initializer=self.weight_initializer,
                     kernel_regularizer=self.weight_regularizer,
-                    padding=self.padding,
+                    padding=padding,
                     trainable=self.trainable_weights,
                     num_bits=self.weight_bits,
-                    name=name + "_conv")(x)
+                    name=name + "_conv" + sk)(x)
 
         if dropout_rate > 0.0 and not first_layer:
             x = Dropout(rate=dropout_rate, name=name + "_dropout")(x)
@@ -221,13 +222,15 @@ class ResNet():
             x_conv = self._conv_unit(
                 x_in,
                 filters=filters // 2,
+                kernel_size=kernel_size - 1,
                 stride=stride,
                 dropout_rate=dropout_rate,
                 activation=activation,
+                padding="valid",
                 name=name)
 
             x_pool = AveragePooling2D(
-                pool_size=kernel_size,
+                pool_size=kernel_size - 1,
                 strides=stride,
                 padding=self.padding,
                 name=name + "_pool")(x_in)
@@ -239,8 +242,10 @@ class ResNet():
                 x_in,
                 filters=filters,
                 stride=stride,
+                kernel_size=kernel_size,
                 dropout_rate=dropout_rate,
                 activation=activation,
+                padding="same",
                 name=name)
 
             x = Add(name=name + "_add")([x_in, x_conv])
@@ -289,15 +294,9 @@ class ResNet():
             downsample=self.downsample_3,
             activation=self.activation)
 
-        x = self._conv_unit(
-            x,
-            filters=self.classes,
-            kernel_size=1,
-            activation=self.activation,
-            name="last")
-
         x = GlobalAveragePooling2D(name="global_avg_pool")(x)
 
-        x = self._batch_norm(x, name="output")
+        x = self._dense_block(
+            x, units=self.classes, activation=self.activation, name="last")
         x = self._activation(x, activation="softmax", name="output")
         return x
