@@ -1,2 +1,2 @@
 # cifar
-Testing different lightweight archs on cifar10 and cifar100
+Implementation of binary neural network for cifar10 and cifar100
